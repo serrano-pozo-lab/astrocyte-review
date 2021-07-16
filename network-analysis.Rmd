@@ -1,0 +1,589 @@
+---
+title: "PPI Network Analysis"
+description: |
+ This script constructs a protein-protein interaction network using the STRING database and visualizes the network via several plots.
+bibliography: astrocyte-review-bibliography.bib
+csl: https://www.zotero.org/styles/elsevier-vancouver
+author:
+  - first_name: "Ayush"
+    last_name: "Noori"
+    url: https://www.github.com/ayushnoori
+    affiliation: Massachusetts General Hospital
+    affiliation_url: https://www.serranopozolab.com
+    orcid_id: 0000-0003-1420-1236
+output:
+  distill::distill_article:
+    toc: true
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+```
+
+# Dependencies
+
+Load requisite packages and define directories. Note that the GitHub package [`mattflor/chorddiag`](https://github.com/mattflor/chorddiag) is used to create interactive chord diagrams using the Javascript visualization library D3. This package can be downloaded via `devtools::install_github("mattflor/chorddiag")`.
+
+This script also uses my personal utilities package `brainstorm`, which can be downloaded via `devtools::install_github("ayushnoori/brainstorm")`.
+
+```{r load-packages, message=FALSE, warning=FALSE}
+
+# data manipulation
+library(data.table)
+library(purrr)
+library(magrittr)
+
+# fast file system operations
+library(fs)
+
+# access STRING API
+library(httr)
+
+# base visualization
+library(ggplot2)
+library(RColorBrewer)
+
+# graph libraries
+library(igraph)
+library(ggraph)
+library(graphlayouts)
+
+# heatmap
+library(ComplexHeatmap)
+
+# chord diagrams
+library(circlize)
+library(chorddiag)
+
+# interactive network
+library(visNetwork)
+
+# utility functions
+library(brainstorm)
+
+```
+
+Note that directories are relative to the R project path.
+
+```{r define-directores}
+
+# set directories
+ddir = "Data"
+dir1 = file.path("Results", "1 - STRING PPI Network")
+
+```
+
+# Query STRING API
+
+Read data, then count the number of input proteins.
+
+```{r read-data}
+
+# read data
+dat = fread(file.path(ddir, "ADRA Protein Set.csv"), encoding = "UTF-8")
+nrow(dat) %>% paste0("Input Proteins: ", .) %>% message
+
+# show data
+show_table(head(dat, 20))
+
+```
+
+[STRING](https://string-db.org/) is a database of known and predicted protein-protein interactions which allow the creation of functional protein association networks [@szklarczyk_string_2019].
+
+Map from gene symbols to STRING IDs using the STRING API. Proteins whose preferred IDs differ from their query symbol are later replaced before the network is constructed [@the_uniprot_consortium_uniprot_2021; @tweedie_genenamesorg_2021]. As expected, the immunoglobulins are excluded as they are not represented in the STRING database.
+
+```{r map-symbols}
+
+root_api = "https://version-11-0b.string-db.org/api"
+
+# construct query URL
+map_symbols = list(identifiers = paste(dat[, Symbol], collapse="%0d"),
+                   species = "9606", echo_query = "1", caller_identity = "SerranoPozoLab")
+
+# complete API call to map IDs
+id_request = httr::POST(url = paste0(root_api, "/tsv/get_string_ids"), body = map_symbols)
+ids = httr::content(id_request, as = "text", encoding = "UTF-8") %>% fread()
+
+# check for multiple mappings
+ids[, any(duplicated(queryIndex))] %>% paste0("Multiple Mappings: ", ., "\n") %>% message()
+
+# check for duplicate mappings
+diff = ids[queryItem != preferredName]
+diff[, paste(queryItem, preferredName, sep = " --> ")] %>%
+  c("Different Mappings: ", .) %>% paste0("\n") %>% message()
+
+# count total proteins with mappings
+nrow(ids) %>% paste0("Proteins with Mappings: ", ., "/", nrow(dat), "\n") %>% message()
+
+# print excluded proteins
+dat[!(Symbol %in% ids$queryItem), paste(Symbol, collapse = ", ")] %>%
+  paste0("Excluded Markers: ", .) %>% message()
+
+```
+
+Construct the network using another API call. Note that, as above, we use a `POST` request rather than the simpler `GET` to circumvent the character limit of the latter. KIF21B is excluded as it is an isolated node (does not have any connections).
+
+```{r get-network}
+
+# construct query URL
+get_network = list(identifiers = paste(ids[, stringId], collapse="%0d"),
+                   species = "9606", echo_query = "1", caller_identity = "SerranoPozoLab")
+
+# complete API call to retrieve network
+network_request = httr::POST(url = paste0(root_api, "/tsv/network"), body = get_network)
+network = httr::content(network_request, as = "text", encoding = "UTF-8") %>% fread()
+
+# count total included proteins
+network[, c(preferredName_A, preferredName_B)] %>% uniqueN() %>%
+  paste0("Proteins Included in Network: ", ., "/", nrow(dat), "\n") %>% message()
+
+# print excluded proteins
+network[, c(preferredName_A, preferredName_B)] %>% 
+  c(diff$queryItem, .) %>%
+  { dat[!(Symbol %in% .), paste(Symbol, collapse = ", ")] } %>%
+  paste0("Excluded Markers: ", .) %>% message()
+
+```
+
+# Construct PPI Network
+
+Use `igraph` functions to create the network. Proteins whose preferred IDs differ from their query symbol are replaced before the network is constructed. Note that the complete `dat` object, including the markers IGHA1, IGHG1, IGHM, and KIF21B (which have no connections), is passed to the `graph_from_data_frame` call; hence, while these nodes will be included in the vertex list of the network object, they will have a centrality of 0 and will not be present when visualizing the network.
+
+```{r construct-network}
+
+# remove unneeded columns and duplicate rows
+network[, c("stringId_A", "stringId_B", "ncbiTaxonId") := NULL]
+network = unique(network)
+
+# replace with correct query symbols
+replace_diff = function(net, r, pname, qname) { net[get(r) == pname, (r) := qname] }
+pwalk(diff[, .(preferredName, queryItem)], ~replace_diff(network, "preferredName_A", .x, .y))
+pwalk(diff[, .(preferredName, queryItem)], ~replace_diff(network, "preferredName_B", .x, .y))
+setnames(network, old = 1:2, c("nodeA", "nodeB"))
+
+# construct network
+setcolorder(dat, "Symbol")
+net = graph_from_data_frame(d = network, vertices = dat, directed = FALSE)
+
+# show network
+show_table(head(network, 20))
+
+```
+
+Below is a key of column names which represent evidence for interaction in the STRING database.
+
+| Name   | Definition                 |
+|--------|----------------------------|
+| score  | combined score             |
+| nscore | gene neighborhood score    |
+| fscore | gene fusion score          |
+| pscore | phylogenetic profile score |
+| ascore | coexpression score         |
+| escore | experimental score         |
+| dscore | database score             |
+| tscore | text mining score          |
+
+# Calculate Assortativity Coefficient
+
+The assortativity coefficient is positive is similar vertices - based on some external property, in this case, we use functional category - tend to connect to each other, and negative otherwise.
+
+```{r calculate-assortativity}
+
+# calculate assortativity
+assort = V(net)$Group %>% as.factor() %>% as.integer() %>% assortativity_nominal(net, ., directed = FALSE)
+message(paste("Assortativity Coefficient:", assort))
+
+```
+
+# Define Color Palette
+
+First, define the color palette for all subsequent plots.
+
+```{r create-palette}
+
+# define color palette
+cols = colorRampPalette(c("#B4436C", "#F2BAC9", "#F7A278", "#FCEFB4", "#C8E9A0", "#6DD3CE", "#91A6FF", "#E5C2FF", "#B49082", "#ABB8C4"))(uniqueN(dat[, Group]))
+
+# set names and order
+names(cols) = dat[, Group] %>% unique() %>% .[order(.)]
+
+# set alternating order for chord diagram
+alt = dat[, .N, by = Group] %>% .[order(Group), N] %>% order()
+alt = c(rbind(alt[1:9], rev(alt[10:18])))
+
+# set order for chord diagram
+# alt = dat[, .N, by = Group] %>% .[order(Group), N] %>% order()
+
+```
+
+# Plot Heatmap
+
+Plot a heatmap of the adjacency matrix. Cluster rows and columns and annotate by functional group.
+
+```{r plot-heatmap}
+
+# extract adjacency matrix
+hm_dat = as_adj(net, attr = "score", sparse = FALSE)
+diag(hm_dat) = 1
+
+# create heatmap annotations
+hm_annos = dat[, Group]
+hm_cols = list(Group = cols)
+
+# create group labels, add line breaks
+hm_grp = unique(hm_annos)
+hm_grp[c(2, 3, 7, 8, 18)] = c("Blood-Brain\nBarrier", "Calcium\nHomeostasis", "Insulin\nSignaling", "Intracellular\nTrafficking", "Water/K+\nHomeostasis")
+
+# top annotation
+top_annos = HeatmapAnnotation(Group = anno_block(gp = gpar(fill = cols),
+                                                 labels = hm_grp,
+                                                 labels_gp = gpar(fontsize = 7, lineheight = 0.8)))
+
+# left annotation
+left_annos = rowAnnotation(Group = anno_block(gp = gpar(fill = cols),
+                                              labels = hm_grp,
+                                              labels_gp = gpar(fontsize = 7, lineheight = 0.8)))
+
+# function to set outline of each functional group
+group_outline = function(j, i, x, y, width, height, fill) {
+  if(i[1] == j[1]) grid.rect(gp = gpar(lwd = 2, fill = "transparent"))
+}
+
+# function to establish color scale
+color_scale = function(maxcol, val) { colorRamp2(c(0, 1), c("#F3F4F7", maxcol))(val) }
+
+# function to set color of each cell, darker color is #9DA5BE
+color_cell = function(j, i, x, y, width, height, fill) {
+  if(hm_annos[i] == hm_annos[j]) {
+    grid.rect(x = x, y = y, width = width, height = height,
+              gp = gpar(col = NA, fill = color_scale(cols[hm_annos[i]], hm_dat[i, j])))
+  } else {
+    grid.rect(x = x, y = y, width = width, height = height,
+             gp = gpar(col = NA, fill = color_scale("#525C7A", hm_dat[i, j])))
+  }
+}
+
+# plot heatmap
+hm = Heatmap(hm_dat,
+             col = c("#F3F4F7", "red"),
+             row_split = hm_annos, column_split = hm_annos,
+             cluster_row_slices = FALSE, cluster_column_slices = FALSE,
+             row_gap = unit(1, "mm"), column_gap = unit(1, "mm"), 
+             column_title = NULL, row_title = NULL,
+             top_annotation = top_annos, left_annotation = left_annos,
+             # cell_fun = color_cell,
+             layer_fun = group_outline,
+             show_heatmap_legend = FALSE
+             )
+
+# save heatmap
+pdf(file.path(dir1, "Network Heatmap.pdf"), width = 30, height = 30)
+print(hm)
+dev.off()
+
+```
+
+# Calculate Centrality Scores
+
+Calculate the eigenvalue centrality scores for the entire graph. Then, remove isolated nodes for further visualization.
+
+```{r calculate-centrality}
+
+# calculate centrality
+cent = eigen_centrality(net)$vector %>% data.table(Symbol = names(.), Centrality = .)
+
+# add to vertex data
+dat = dat %>% merge(cent, by = "Symbol") %>% .[order(-Centrality)]
+vertex_attr(net, "Centrality") = cent[, Centrality]
+
+# clean ID mapping
+ids = ids[, .(queryItem, stringId, preferredName, annotation)]
+setnames(ids, c("Symbol", "STRING.ID", "STRING.Symbol", "STRING.Annotation"))
+
+# merge and save marker information
+dat %>% merge(ids, by = "Symbol", all.x = TRUE, sort = FALSE) %>%
+  fwrite(file.path(dir1, "STRING ADRA Annotations.csv"))
+
+# remove isolated vertices from network
+sub = delete_vertices(net, which(igraph::degree(net) <= 2))
+paste0("Proteins Retained in Network: ", length(V(sub)), "/", nrow(dat)) %>% message()
+
+```
+
+# Plot Circos Graph
+
+First, create a generic network plotting function which is called multiple times throughut the script.
+
+```{r plot-network}
+
+plot_network = function(net, layout, minmax, ..., arc = TRUE) {
+  
+  edge_geom = ifelse(arc, geom_edge_arc0, geom_edge_link0)
+  
+  p = ggraph(net, layout, ...) + 
+    edge_geom(aes(width = escore), alpha = 0.4) +
+    scale_edge_width(range = c(0.2, 0.9)) +
+    geom_node_point(aes(color = Group, size = Centrality)) + scale_size(range = minmax) +
+    scale_color_manual(values = cols) +
+    theme_graph(fg_text_colour = "black", base_family = "Helvetica") + 
+    guides(edge_width = FALSE, size = FALSE) +
+    labs(color = "Group")
+  
+  return(p)
+  
+}
+
+```
+
+Next, create a function to plot a circos graph of the network, then plot the figure with and without labels. The labeling code is inspired by [this tutorial](https://www.r-graph-gallery.com/296-add-labels-to-circular-barplot) from the R Graph Gallery. Spaces are used as an efficient trick to keep labels from overlapping with the nodes. Although the labels are truncated in the figure, they can be recovered with Inkscape (or an analogous vector editing tool).
+
+```{r plot-circos}
+
+ngrp = uniqueN(vertex_attr(sub, "Group"))
+
+plot_circos = function(net, minmax, fname, w, h, legend = FALSE) {
+  
+  p = plot_network(net, "linear", minmax, circular = TRUE, sort.by = Group)
+  
+  if(!legend) { p = p + theme(legend.position = "none") } else {
+    
+    p = p + # geom_node_label(aes(label = name), repel = TRUE, alpha = 0.8, segment.size = NA) +
+      geom_node_text(aes(label = Label, angle = Angle, hjust = Hjust)) +
+      theme(legend.title = element_text(face = "bold", size = 18, hjust = 0.5),
+            legend.text = element_text(size = 14), legend.position = "bottom",
+            plot.margin = unit(rep(-1, 4), "cm"))
+  }
+  
+  ggsave(file.path(dir1, fname), p, width = w, height = h)
+  
+}
+
+# generate angle for labels
+md = sub %>%
+  { data.table(Name = vertex_attr(., "name"), Angle = length(V(.))) } %>%
+  .[, Angle := Angle %>% { (1:.[1] - 0.5)/. } %>% { 90 - (360*.) }] %>%
+  .[, Hjust := ifelse(Angle < -90, 1, 0)] %>%
+  .[, Label := ifelse(Angle < -90, paste0(Name, "      "), paste0("      ", Name))] %>%
+  .[, Angle := Angle %>% ifelse(. < -90, . + 180, .)]
+
+# assign to plot
+vertex_attr(sub, "Angle") = md$Angle
+vertex_attr(sub, "Hjust") = md$Hjust
+vertex_attr(sub, "Label") = md$Label
+
+
+# create and save plot
+# plot_circos(sub, c(2, 4), "Circos Plot.pdf", 8.5, 8.5)
+plot_circos(sub, c(2, 15), "Circos Plot with Labels.pdf", 18, 19, TRUE)
+
+```
+
+# Plot Chord Graph
+
+First, transform network to adjacency matrix, then group by function. We also define a utility `merge` function to retrieve the group for an arbitrary set of symbols - this will be useful later.
+
+```{r transform-adjacency}
+
+# utility function to retrieve group
+get_grp = function(x, var) {
+  merge(x, dat[, .(Symbol, Group)], by.x = var, by.y = "Symbol", all.x = TRUE, sort = FALSE)
+}
+
+# melt to adjacency list
+adj = as.matrix(as_adj(sub)) %>% reshape2::melt() %>% setDT()
+
+# replace protein names with groups, then convert back to matrix
+adj = adj %>% .[value == 1, ] %>% get_grp("Var1") %>% get_grp("Var2") %>%
+  .[, .(Group.x, Group.y)] %>% graph_from_data_frame() %>% as_adj(sparse = FALSE)
+
+# reorder alphabetically to match colors
+adj = names(cols) %>% adj[., .]
+
+```
+
+The package `circlize` is used to create static chord diagrams, while the GitHub package [`mattflor/chorddiag`](https://github.com/mattflor/chorddiag) is used to create interactive chord diagrams using the Javascript visualization library D3. Notice that, for the static plot, the alternating order defined previously (in `alt`) is used.
+
+```{r plot-chord}
+
+# static plot
+pdf(file.path(dir1, "Chord Diagram.pdf"), 12, 12)
+# circlize::chordDiagram(adj[alt, alt], transparency = 0.5, grid.col = cols[alt])
+circlize::chordDiagram(adj, transparency = 0.5, grid.col = cols)
+dev.off()
+
+# interactive plot
+chorddiag(adj, groupColors = as.character(cols), groupnamePadding = 30, groupnameFontsize = "10") %>%
+  htmlwidgets::saveWidget(., file.path(dir1, "Interactive Chord Diagram.html"))
+
+```
+
+# Plot Network Graph
+
+Create manual grouped layout to cluster by functional group (inspired by `igraph::crossing()` and [this](https://stackoverflow.com/questions/16390221/how-to-make-grouped-layout-in-igraph) StackOverflow post).
+
+```{r group-layout}
+
+# check if two nodes are within the same cluster
+el = as_edgelist(sub) %>% as.data.table() %>% 
+  get_grp("V1") %>% get_grp("V2") %>%
+  .[, Weights := ifelse(Group.x == Group.y, yes = 5, no = 25)]
+
+# # if nodes have no connections with their cluster, set weight as intermediate (to avoid clusters of n = 1)
+# for(v in V(sub)$name) {
+#   if(el[V1 == v | V2 == v, sum(Weights == 5) <= 1]) { el[V1 == v | V2 == v, Weights := 15] }
+# }
+
+# # create manual layout
+lyt = graphlayouts::layout_with_stress(sub, weights = el[, Weights]) %>%
+  as.data.table() %>% setnames(c("X", "Y")) %>% .[, Symbol := vertex_attr(sub, "name")]
+
+# create manual layout
+# lyt = igraph::layout_with_kk(sub, weights = el[, Weights]) %>%
+#   as.data.table() %>% setnames(c("X", "Y")) %>% .[, Symbol := vertex_attr(sub, "name")]
+
+```
+
+Then, create network graph.
+
+```{r network-graph}
+
+# create network graph
+network_graph = plot_network(sub, "manual", c(1, 10), x = lyt[, X], y = lyt[, Y], arc = FALSE) +
+  geom_node_label(aes(label = name), repel = TRUE, alpha = 0.8, 
+                  box.padding = 0.5, segment.size = NA, label.size = 0.1, size = 8*(5/14)) +
+  theme(legend.title = element_text(size = 16, face = "bold"),
+        legend.text = element_text(size = 12.5), legend.position = "bottom")
+
+# save network graph
+ggsave(file.path(dir1, "Network Graph.pdf"), network_graph, width = 15, height = 15)
+
+```
+
+Finally, prune the network graph for the methods figure visualization.
+
+```{r methods-network}
+
+# prune network graph
+prune_graph = sub %>% delete_vertices(which(igraph::degree(.) <= 25))
+prune_lyt = lyt[Symbol %in% vertex_attr(prune_graph, "name")]
+  
+# create methods graph
+methods_network = plot_network(prune_graph, "manual", c(5, 15), x = prune_lyt[, X], y = prune_lyt[, Y], arc = FALSE) + theme(legend.position = "none")
+
+# save methods graph
+ggsave(file.path(dir1, "Methods Graph.svg"), methods_network, width = 10, height = 10)
+
+```
+
+# Hub Gene Networks
+
+Create networks for top hub markers emphasizing their connectivity. First, define a function
+
+```{r hub-network}
+
+# remove and recreate directory if it exists
+hub_dir = file.path(dir1, "Hub Gene Networks")
+if(fs::dir_exists(hub_dir)) fs::dir_delete(hub_dir); fs::dir_create(hub_dir)
+
+hub_network = function(hub, idx, PDF = TRUE, SVG = TRUE) {
+  
+  # duplicate network, identify hub node index
+  hub_net = copy(sub)
+  hub_idx = vertex_attr(hub_net, "name") == hub
+  
+  # label nodes by neighbor/hub status
+  # cat(paste0("[", idx, "] ", hub, ", "))
+  vertex_attr(hub_net, "hub_node") = V(hub_net) %in% ego(hub_net, order = 1, nodes = hub)[[1]] %>%
+    as.numeric() %>% data.table(Label = .) %>%
+    .[hub_idx, Label := 2] %>%
+    .[, Label := factor(Label, levels = c(0, 1, 2), labels = c("node", "neighbor", "hub"))] %>%
+    .[, as.character(Label)]
+  
+  # identify edges connected to the hub node
+  edge_attr(hub_net, "hub_edge") = as_edgelist(hub_net) %>% data.table() %>%
+    pmap_chr(paste) %>% grepl(hub, .)
+  
+  # create sub network for hub nodes and edges
+  sub_node_idx = which(vertex_attr(hub_net, "hub_node") %in% c("node", "hub"))
+  sub_node_net = delete_vertices(hub_net, sub_node_idx)
+  sub_edge_net = delete_edges(hub_net, which(!edge_attr(hub_net, "hub_edge")))
+  
+  # plot hub network
+  hub_graph = ggraph(hub_net, "manual", x = lyt[, X], y = lyt[, Y]) +
+    geom_edge_link0(aes(width = hub_edge, color = hub_edge, alpha = hub_edge)) +
+    scale_edge_width_manual(values = c(0.2, 0.25)) +
+    scale_edge_color_manual(values = c("#3D405B", "#D3D3DA")) +
+    scale_edge_alpha_manual(values = c(0.6, 0.4)) +
+    geom_node_point(aes(color = hub_node, size = hub_node)) + scale_size_manual(values = c(0, 2, 1)) +
+    scale_color_manual(values = c("#DB876B", "#FED766", "#3D405B")) +
+    
+    # replot hub edges, then nodes, on top of previous graph (so they are non-overlapping)
+    geom_edge_link0(data = get_edges()(create_layout(sub_edge_net, layout = "manual", x = lyt[, X], y = lyt[, Y])),
+                    width = 0.25, color = "#D3D3DA", alpha = 0.6) +
+    geom_node_point(data= get_nodes()(create_layout(sub_node_net, layout = "manual",
+                                                    x = lyt[-sub_node_idx, X], y = lyt[-sub_node_idx, Y])),
+                    color = "#FED766", size = 2) +
+    
+    # plot hub node with label
+    ggforce::geom_circle(aes(x0 = lyt[hub_idx, X], y0 = lyt[hub_idx, Y], r = 5*(5/14)), fill = "#DB876B", color = NA) +
+    geom_text(aes(x = lyt[hub_idx, X], y = lyt[hub_idx, Y]),
+              label = hub, size = (3 + 4 * 1/nchar(hub))*(5/14), fontface = "bold", color = "white") +
+    theme_graph(fg_text_colour = "white", base_family = "Helvetica") +
+    theme(legend.position = "none")
+  
+  # save output
+  if(PDF) {ggsave(file.path(hub_dir, paste(idx, "-", hub, "Network.pdf")), hub_graph, width = 7, height = 7)}
+
+  if(SVG) {ggsave(file.path(hub_dir, paste0(idx, "_", hub, "_Network.svg")),
+                  hub_graph + theme(panel.background = element_rect(fill = "#2B2F48", color = "#2B2F48"),
+                                    plot.background = element_rect(fill = "#2B2F48", color = "#2B2F48")),
+                  width = 7, height = 7)}
+
+  return(hub_graph)
+  
+}
+
+# map function over all markers
+hub_graphs = imap(dat[Symbol %in% vertex_attr(sub, "name"), Symbol], ~hub_network(.x, .y, TRUE, TRUE))
+cat("DONE")
+
+```
+
+# Interactive Network Graph
+
+Create interactive network graph (with manual layout identical to above).
+
+```{r interactive-network}
+
+# get network data
+net_dat = get.data.frame(sub, "both")
+
+# parse nodes for interactive graph
+nodes = net_dat$vertices %>% as.data.table() %>%
+  setnames(c("name", "Centrality"), c("id", "value")) %>%
+  .[, label := id] %>%
+  .[, value := 60*(value+0.5)] %>%
+  .[, shape := "circle"] %>%
+  .[, color := factor(Group, levels = names(cols), labels = cols)] %>%
+  .[, .(id, label, value, shape, color)]
+
+# parse edges for interactive graph
+edges = net_dat$edges %>% as.data.table() %>%
+  setnames("escore", "value") %>%
+  .[, value := value + 0.1] %>%
+  .[, color := "rgba(0,0,0,0.5)"] %>%
+  .[, title := paste(from, to, sep = " to ")] %>%
+  .[, .(from, to, value, color, title)]
+
+# create interactive network graph
+int_net = visNetwork(nodes, edges) %>%
+  visOptions(height = 800, width = 1200,
+             highlightNearest = TRUE, clickToUse = TRUE,
+             nodesIdSelection = list(main = "Select Gene")) %>%
+  visInteraction(navigationButtons = TRUE, dragView = FALSE) %>%
+  visIgraphLayout("layout_with_kk",
+                  coords = as.matrix(lyt[, .(X, Y)]), maxiter = 0)
+
+visSave(int_net, file.path(dir1, "Interactive Network Graph.html"))
+
+```

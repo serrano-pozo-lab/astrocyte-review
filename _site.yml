@@ -1,0 +1,26 @@
+name: "Astrocyte Review"
+title: "Complexity of AD Astrocyte Reaction"
+description: |
+  Astrocyte Review
+theme: theme.css
+favicon: images/favicon.ico
+base_url: https://serranopozolab.org/astrocyte-review
+repository_url: https://github.com/serrano-pozo-lab/astrocyte-review
+output_dir: "docs"
+navbar:
+  search: false
+  source_url: https://github.com/serrano-pozo-lab/astrocyte-review
+  right:
+    - text: "Home"
+      href: index.html
+    - text: "Network Analysis"
+      href: network-analysis
+    - text: "Enrichment Analyses"
+      menu:
+        - text: "Pathway Enrichment Analysis"
+          href: pathway-enrichment
+        - text: "Transcription Factor Enrichment Analysis"
+          href: tf-enrichment
+    - text: "-Omics Comparison"
+      href: omics-comparison 
+output: distill::distill_article

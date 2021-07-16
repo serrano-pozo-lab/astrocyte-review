@@ -1,0 +1,8 @@
+---
+title: "404 Error"
+output:
+  distill::distill_article:
+    toc: true
+---
+
+You may have reached this page in error. Please return to the home page, or open an issue on our [GitHub repository](https://github.com/serrano-pozo-lab/astrocyte-review).

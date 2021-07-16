@@ -1,0 +1,676 @@
+---
+title: "-Omics Comparison"
+description: |
+ This script compares the ADRA protein set with recent transcriptomic and proteomic studies on human control and AD brains.
+bibliography: astrocyte-review-bibliography.bib
+csl: https://www.zotero.org/styles/elsevier-vancouver
+author:
+  - first_name: "Ayush"
+    last_name: "Noori"
+    url: https://www.github.com/ayushnoori
+    affiliation: Massachusetts General Hospital
+    affiliation_url: https://www.serranopozolab.com
+    orcid_id: 0000-0003-1420-1236
+output:
+  distill::distill_article:
+    toc: true
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+```
+
+# Dependencies
+
+Load requisite packages. This script requires version 2.2.14 of the `ff` package, which may be installed by `devtools::install_version("ff", version = "2.2.14", repos = "http://cran.us.r-project.org")`. The microarray annotation packages are available from R/Bioconductor.
+
+This script also uses my personal utilities package `brainstorm`, which can be downloaded via `devtools::install_github("ayushnoori/brainstorm")`
+
+```{r load-packages, message=FALSE, warning=FALSE}
+
+# data manipulation
+library(data.table)
+library(purrr)
+library(magrittr)
+
+# heatmap libraries
+library(ggplot2)
+library(RColorBrewer)
+library(pheatmap)
+
+# Excel manipulation
+library(openxlsx)
+
+# Simpson et al. microarray analysis
+library(GEOquery)
+library(ff)
+library(affycoretools)
+library(oligo)
+library(limma)
+
+# Simpson et al. microarray annotation
+library(pd.hg.u133.plus.2)
+library(hgu133plus2.db)
+
+# utility functions
+library(brainstorm)
+
+```
+
+Note that directories are relative to the R project path.
+
+```{r define-directores}
+
+# set directories
+ddir = file.path("Data", "4 - Cross-Validation")
+dir4 = file.path("Results", "4 - Cross-Validation")
+
+```
+
+# Generic Functions
+
+Read ADRA protein set.
+
+```{r read-data}
+
+# read data
+dat = fread(file.path("Data", "ADRA Protein Set.csv"), encoding = "UTF-8")
+
+```
+
+Define generic z-score function.
+
+```{r z-score}
+
+# define z-score function
+compute_z = function(x) { (x - mean(x, na.rm = T))/sd(x, na.rm = T) }
+
+```
+
+Create generic heatmap plotting function. Here, `bounds` is a vector of length 2 which specifies the lower and upper bounds, respectively.
+
+```{r plot-heatmap}
+
+plot_heatmap = function(hm_dat, hm_ann_row = NA, hm_ann_col = NA, hm_colors,
+                        hm_gaps_row = NULL, hm_gaps_col = NULL, bounds) {
+  
+  p = pheatmap(hm_dat, 
+               color = colorRampPalette(rev(brewer.pal(n = 11, name = "RdYlBu")))(100),
+               breaks = seq(from = bounds[1], to = bounds[2], length.out = 101),
+               cluster_cols = FALSE, cluster_rows = FALSE,
+               annotation_row = hm_ann_row,
+               annotation_col = hm_ann_col,
+               annotation_names_row = FALSE,
+               annotation_colors = hm_colors,
+               border_color = NA,
+               show_colnames = FALSE,
+               gaps_row = hm_gaps_row,
+               gaps_col = hm_gaps_col,
+               silent = TRUE)
+}
+
+plot_n = function(n, hm_dat, ...) {
+  
+  hm_dat = rbind(head(hm_dat, n), tail(hm_dat, n))
+  
+  hm_ann_row = data.frame(Direction = rep(c("Upregulated", "Downregulated"), each = n))
+  rownames(hm_ann_row) = rownames(hm_dat)
+  
+  plot_heatmap(hm_dat = hm_dat, hm_ann_row = hm_ann_row, hm_gaps_row = c(n), ...) %>% return()
+  
+}
+
+```
+
+# Simpson et al.
+
+Read, parse, analyze, and plot data from Simpson et al., a microarray expression profiling dataset of laser capture microdissected GFAP-immunoreactive astrocytes from the temporal neocortex of *n* = 6 Braak I/II, *n* = 6 Braak III/IV, and *n* = 6 Braak V/VI subjects [@simpson_microarray_2011].
+
+Gene Expression Omnibus (GEO) Accession: [GSE29652](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE29652)
+
+### Read Simpson et al. Data
+
+First, import .CEL files containing raw probe-level data into an R `AffyBatch` object. Next, perform RMA data processing and convert to an `ExpressionSet`. Then, annotate using the Affymetrix `hgu133plus2.db` package. Probes with duplicate mappings are removed by retaining the probe with the highest interquartile range (IQR).
+
+```{r read-simpson}
+
+# read and normalize .CEL files
+gset = list.files(path = file.path(ddir, "Simpson"), pattern = "\\.CEL$", full.names = TRUE) %>% 
+  read.celfiles() %>% 
+  oligo::rma() %>% # default level of summarization
+  annotateEset(hgu133plus2.db)
+
+# get expression data and annotation
+simpson = exprs(gset) %>% as.ffdf() %>% 
+  as.data.table(keep.rownames = TRUE) %>%
+  merge(fData(gset), ., by.x = "PROBEID", by.y = "rn", all.y = TRUE)
+
+# get sample column names
+simpson_samples = colnames(simpson) %>% .[!(. %in% fvarLabels(gset))]
+
+# calculate IQR, then remove probes with duplicate mappings
+simpson = as.data.table(simpson) %>%
+  .[, IQR := pmap_dbl(.SD, ~IQR(.(...), na.rm = TRUE)), .SDcols = simpson_samples] %>%
+  .[order(ENTREZID, IQR), ] %>%
+  .[!duplicated(ENTREZID), ]
+
+```
+
+### Differential Expression Analysis
+
+Perform differential expression analysis on Simpson et al. data. Compare Braak I/II and Braak V/VI subjects.
+
+```{r simpson-deg}
+
+# select samples
+gset = gset[simpson$PROBEID, c(1:6, 13:18)]
+sml = c(rep("G0", 6), rep("G1", 6))
+
+# set up the data and proceed with analysis
+fl = as.factor(sml)
+gset$description = fl
+design = model.matrix(~ description + 0, gset)
+colnames(design) = levels(fl)
+
+# linear model fit
+fit = lmFit(gset, design)
+cont.matrix = makeContrasts(G1-G0, levels = design)
+fit2 = contrasts.fit(fit, cont.matrix)
+fit2 = eBayes(fit2, 0.01)
+tT = topTable(fit2, adjust = "fdr", sort.by = "B", number = nrow(gset), confint = TRUE) %>% as.data.table()
+
+# append expression matrix to results, then write to Excel file
+simpson_degs = exprs(gset) %>%
+  as.data.table(keep.rownames = TRUE) %>%
+  merge(tT, ., by.x = "PROBEID", by.y = "rn", all.x = TRUE, all.y = FALSE)
+
+write.xlsx(simpson_degs, file.path(dir4, "Simpson - Differential Expression Analysis.xlsx"), 
+           asTable = TRUE, tableStyle = "TableStyleMedium5")
+
+```
+
+### Prepare for Heatmap
+
+Merge Simpson et al. data with ADRA marker set and compute z-scores.
+
+```{r merge-simpson}
+
+# subset markers in intersection of ADRA and Simpson et al.
+simpson_z = simpson[SYMBOL %in% dat[, Symbol], ]
+
+# remove .CEL file extension
+simpson_samples %>% setnames(simpson_z, ., gsub(".CEL", "", .))
+simpson_samples = gsub(".CEL", "", simpson_samples)
+
+# compute z-scores within each marker
+simpson_z[, (simpson_samples) := pmap_dfr(.SD, ~compute_z(c(...))), .SDcols = simpson_samples]
+
+# create heatmap object
+simpson_hm = simpson_z[, ..simpson_samples] %>% as.matrix()
+rownames(simpson_hm) = simpson_z[, SYMBOL]
+
+# order rows by difference between control and AD
+simpson_hm = simpson_hm %>%
+  { rowMeans(.[, 13:18]) - rowMeans(.[, 1:6]) } %>%
+  order(decreasing = TRUE) %>%
+  simpson_hm[., ]
+
+```
+
+Read Simpson et al. metadata and create both annotation `data.frame` and color palette.
+
+```{r simpson-metadata}
+
+# read metadata to create heatmap annotations
+simpson_hm_col = file.path(ddir, "Simpson", "GSE29652_series_matrix.txt.gz") %>%
+  getGEO(filename = ., getGPL = FALSE) %>% pData() %>%
+  .[simpson_samples, ] %>% subset(select = "braak stage:ch1")
+
+# set column names
+colnames(simpson_hm_col) = "Braak Stage"
+
+# define heatmap colors
+simpson_hm_colors = list(`Braak Stage` = c(`Braak I-II` = "#0EAD69", `Braak III-IV` = "#EFCB68", `Braak V-VI` = "#D7263D"),
+                Direction = c(Upregulated = "#A50026", Downregulated = "#3D5CA7"))
+
+# order columns
+simpson_hm = simpson_hm_col %>% 
+  order(.$`Braak Stage`, colMeans(simpson_hm)) %>%
+  simpson_hm[, .]
+
+```
+
+### Plot Heatmap
+
+```{r plot-simpson}
+
+# plot full heatmap
+simpson_hm_full = plot_heatmap(hm_dat = simpson_hm, hm_ann_col = simpson_hm_col, hm_colors = simpson_hm_colors,
+                       hm_gaps_col = c(6, 12), bounds = c(-2.5, 2.5))
+
+# save full heatmap
+ggsave(file.path(dir4, "Simpson - Full Heatmap.pdf"), simpson_hm_full, width = 10, height = 30)
+
+
+# plot heatmap with top N UP/DOWN genes
+for (i in c(15, 30)) {
+  
+  simpson_hm_n = plot_n(n = i, hm_dat = simpson_hm, hm_ann_col = simpson_hm_col, hm_colors = simpson_hm_colors,
+                       hm_gaps_col = c(6, 12), bounds = c(-2.5, 2.5))
+
+  ggsave(file.path(dir4, paste("Simpson - Top", i*2, "Heatmap.pdf")), simpson_hm_n, width = 10, height = i/3.5 + 2)
+  
+}
+
+```
+
+# Grubman et al.
+
+Read, parse, analyze, and plot data from Grubman et al., a single nuclei RNA-seq study on the entorhinal cortex of *n* = 6 AD and *n* = 6 control subjects. Here, the data file contains single-cell log-normalized counts [@grubman_single-cell_2019].
+
+### Read Grubman et al. Data
+
+Read Grubman et al. data.
+
+```{r read-grubman}
+
+# set metadata columns
+grubman_md = c("sampleID", "batch", "patient", "batchCond", "sex", "nGene")
+
+# read grubman annotations, select astrocytes, and remove unidentified cells
+grubman_annot = fread(file.path(ddir, "Grubman", "Grubman Annotations.tsv")) %>%
+  .[cellType == "astro", ] %>%
+  .[!(patient %in% c("AD-un", "Ct-un")), ] %>%
+  .[order(patient), ..grubman_md]
+
+# read grubman data
+grubman = fread(file.path(ddir, "Grubman", "Grubman Data.tsv")) %>%
+  .[geneName %in% dat[, Symbol], ] %>%
+  data.table::transpose(keep.names = "sampleID", make.names = "geneName") %>%
+  merge(grubman_annot, ., by = "sampleID", all.x = TRUE, sort = FALSE)
+
+# get marker names
+grubman_adra = colnames(grubman) %>% .[!(. %in% grubman_md)]
+
+```
+
+Compute z-scores within each marker, then average z-score across each patient.
+
+```{r compute-grubman}
+
+# compute z-scores within each marker
+grubman[, (grubman_adra) := map(.SD, compute_z), .SDcols = grubman_adra]
+
+# compute average z-scores across each patient
+grubman_z = grubman[, map(.SD, ~mean(..., na.rm = TRUE)), by = .(patient, batchCond), .SDcols = grubman_adra] %>%
+  .[, Condition := factor(batchCond, levels = c("ct", "AD"), labels = c("Control", "Alzheimer"))] %>%
+  .[order(Condition, patient), ]
+
+# order columns by difference between control and AD
+grubman_colorder = grubman_z[, map(.SD, mean), by = Condition, .SDcols = grubman_adra] %>%
+  .[, ..grubman_adra] %>% {.[2, ] - .[1, ]} %>% setcolorder(order(-.)) %>% names()
+
+# prepare for heatmap
+grubman_hm = t(grubman_z)[grubman_colorder, ]
+class(grubman_hm) = "numeric"
+colnames(grubman_hm) = grubman_z[, patient]
+
+# create heatmap annotation
+grubman_hm_col = grubman_z[, .(Condition)] %>% as.data.frame()
+rownames(grubman_hm_col) = grubman_z[, patient]
+
+# order columns
+grubman_hm = grubman_hm_col %>% 
+  order(.$Condition, -colMeans(grubman_hm), decreasing = TRUE) %>%
+  grubman_hm[, .]
+
+# create heatmap color palette
+grubman_hm_colors = list(Condition = c(Control = "#0EAD69", Alzheimer = "#D7263D"),
+                       Direction = c(Upregulated = "#A50026", Downregulated = "#3D5CA7"))
+
+```
+
+### Plot Heatmap
+
+Create the heatmap for the Grubman et al. data. To calculate quantiles, run `quantile(grubman_hm, c(0.01, 0.99)`.
+
+```{r plot-grubman}
+
+# plot full heatmap
+grubman_hm_full = plot_heatmap(hm_dat = grubman_hm, hm_ann_col = grubman_hm_col, hm_colors = grubman_hm_colors,
+                       hm_gaps_col = c(6), bounds = c(-0.6, 0.6))
+
+# save full heatmap
+ggsave(file.path(dir4, "Grubman - Full Heatmap.pdf"), grubman_hm_full, width = 8, height = 17)
+
+
+# plot heatmap with top N UP/DOWN genes
+for (i in c(15, 30)) {
+  
+  grubman_hm_n = plot_n(n = i, hm_dat = grubman_hm, hm_ann_col = grubman_hm_col, hm_colors = grubman_hm_colors,
+                       hm_gaps_col = c(6), bounds = c(-0.6, 0.6))
+
+  ggsave(file.path(dir4, paste("Grubman - Top", i*2, "Heatmap.pdf")), grubman_hm_n, width = 10, height = i/3.5 + 2)
+  
+}
+
+```
+
+# Johnson et al.
+
+Read, parse, analyze, and plot data from Johnson et al. from the Accelerating Medicines Partnership-Alzheimer's Disease (AMP-AD) Consortium [@johnson_large-scale_2020]. Our analysis of Johnson et al. encompasses:
+
+1.  A bulk brain proteomic dataset on the dorsolateral prefrontal cortex (BA9) of 419 individuals from four cohorts, encompassing *n* = 91 control (Braak 0-III and cognitively normal), *n* = 98 asymptomatic AD (Break III-VI, but cognitively normal), and *n* = 230 AD dementia subjects (Braak IV-VI and cognitively impaired), with 3,334 proteins identified in \> 50% subjects.
+
+2.  Cohort 1 of the CSF proteomic study, which includes *n* = 147 control and *n* = 150 AD subjects (total *n* = 297 subjects).
+
+### Read Bulk Brain Data
+
+Read and analyze bulk brain proteomics data from the Johnson et al. AMP-AD dataset.
+
+```{r read-bulk}
+
+# read johnson bulk data
+bulk = fread(file.path(ddir, "Johnson", "Bulk Brain", "Johnson Bulk Data.csv"), check.names = TRUE) %>%
+  .[, Marker := map_chr(strsplit(orange..does.not.follow.rules.to.left, "|", fixed = TRUE), 1)]
+
+# get sample names
+bulk_samples = colnames(bulk)[23:441]
+
+# select markers in ADRA set then compute z-scores within each marker
+bulk = c("Marker", bulk_samples) %>%
+  bulk[Marker %in% dat$Symbol, .SD, .SDcols = .] %>%
+  .[, (bulk_samples) := pmap_dfr(.SD, ~compute_z(c(...))), .SDcols = bulk_samples]
+
+
+```
+
+Read annotation data. Remove duplicates and proteins with \> 50% missing values, then merge with annotations.
+
+```{r merge-bulk}
+
+# read johnson bulk annotations
+bulk_annot = fread(file.path(ddir, "Johnson", "Bulk Brain", "Johnson Bulk Annotations.csv"), check.names = TRUE) %>%
+  .[Group %in% c("Control", "AsymAD", "AD"), .(RAW.File.Name, Sex..male.1., Age, PMI, CERAD, Braak, Group)]
+setnames(bulk_annot, c("RAW.File.Name", "Sex..male.1."), c("Sample", "Sex"))
+
+# filter, then merge
+bulk = bulk %>%
+  .[!duplicated(Marker), ] %>%
+  .[, MissingCount := pmap_int(.SD, ~sum(is.na(c(...)))), .SDcols = bulk_samples] %>%
+  .[MissingCount < length(bulk_samples)/2, ] %>% .[, MissingCount := NULL] %>%
+  data.table::transpose(keep.names = "Sample", make.names = "Marker") %>%
+  merge(bulk_annot, ., by = "Sample", all.x = FALSE, all.y = TRUE) %>%
+  .[, Condition := factor(Group, levels = c("Control", "AsymAD", "AD"), labels = c("Control", "AsymAD", "Alzheimer"))] %>%
+  .[, Braak := factor(Braak, levels = 0:6, labels = c("Braak 0", "Braak I", "Braak II", "Braak III", "Braak IV",
+                                                      "Braak V", "Braak VI"))] %>%
+  .[order(Condition, Braak), ]
+
+```
+
+Average z-score across Braak stage within each diagnostic group.
+
+```{r average-bulk}
+
+# get marker names
+bulk_adra = colnames(bulk) %>% .[!(. %in% c(colnames(bulk_annot), "Condition"))]
+
+# compute average z-scores across Braak stage
+bulk_z = bulk[, map(.SD, ~mean(..., na.rm = TRUE)), by = .(Condition, Braak), .SDcols = bulk_adra] %>%
+  .[, GroupNames := make.names(paste(Condition, Braak))]
+
+# order columns by difference between control and AD
+bulk_colorder = bulk_z[, map(.SD, mean), by = Condition, .SDcols = bulk_adra] %>%
+  .[, ..bulk_adra] %>% {.[3, ] - .[1, ]} %>% setcolorder(order(-.)) %>% names()
+
+# prepare for heatmap
+bulk_hm = t(bulk_z)[bulk_colorder, ]
+class(bulk_hm) = "numeric"
+colnames(bulk_hm) = bulk_z[, GroupNames]
+
+# create heatmap annotation
+bulk_hm_col = bulk_z[, .(Braak, Condition)] %>% as.data.frame()
+colnames(bulk_hm_col)[1] = "Braak Stage"; rownames(bulk_hm_col) = bulk_z[, GroupNames]
+
+# create heatmap color palette
+bulk_hm_colors = list(
+  Condition = c(Control = "#0EAD69", AsymAD = "#EFCB68", Alzheimer = "#D7263D"),
+  `Braak Stage` = c(`Braak 0`="#0EAD69", `Braak I`="#59B768", `Braak II`="#A3C168",
+            `Braak III`="#EFCB68", `Braak IV`="#E79459", `Braak V`="#DF5D4B", `Braak VI`="#D7263D"),
+  Direction = c(Upregulated = "#A50026", Downregulated = "#3D5CA7")
+)
+
+```
+
+### Plot Bulk Brain Heatmap
+
+Create the heatmap for the Johnson et al. bulk brain data.
+
+```{r plot-bulk}
+
+# plot full heatmap
+bulk_hm_full = plot_heatmap(hm_dat = bulk_hm, hm_ann_col = bulk_hm_col, hm_colors = bulk_hm_colors,
+                       hm_gaps_col = c(4, 8), bounds = c(-0.6, 0.6))
+
+# save full heatmap
+ggsave(file.path(dir4, "Johnson Bulk Brain - Full Heatmap.pdf"), bulk_hm_full, width = 10, height = 12)
+
+
+# plot heatmap with top N UP/DOWN genes
+for (i in c(15, 30)) {
+  
+  bulk_hm_n = plot_n(n = i, hm_dat = bulk_hm, hm_ann_col = bulk_hm_col, hm_colors = bulk_hm_colors,
+                       hm_gaps_col = c(4, 8), bounds = c(-0.6, 0.6))
+
+  ggsave(file.path(dir4, paste("Johnson Bulk Brain - Top", i*2, "Heatmap.pdf")), bulk_hm_n, width = 10, height = i/3.5 + 2)
+  
+}
+
+```
+
+### Read CSF Data
+
+Read and analyze Cohort 1 CSF proteomics data from the Johnson et al. AMP-AD dataset.
+
+```{r read-csf}
+
+# read and clean johnson CSF data
+csf = fread(file.path(ddir, "Johnson", "CSF", "Cohort 1 Clean Data.csv"), check.names = TRUE) %>%
+  .[, Marker := map_chr(strsplit(V1, "|", fixed = TRUE), 1)] %>%
+  .[!duplicated(Marker), ] %>%
+  .[!Marker == "0", ]
+
+# get sample names
+csf_samples = colnames(csf) %>% .[!(. %in% c("V1", "Marker"))]
+
+# select markers in ADRA set then compute z-scores across markers
+csf = c("Marker", csf_samples) %>%
+  csf[Marker %in% dat$Symbol, .SD, .SDcols = .] %>%
+  .[, (csf_samples) := pmap_dfr(.SD, ~compute_z(c(...))), .SDcols = csf_samples]
+
+```
+
+Read annotation data. Remove duplicates and proteins with \> 33% missing values, then merge with annotations.
+
+```{r merge-csf}
+
+# read johnson CSF annotations
+csf_annot = fread(file.path(ddir, "Johnson", "CSF", "Cohort 1 Traits.csv"), check.names = TRUE) %>%
+  .[Group %in% c("Control", "AD"), .(SampleID, Batch, Group, Age, Sex, Race, MoCA,
+                                     APOE.Genotype, AB42.ELISA, tTau.ELISA, pTau.ELISA)] %>%
+  .[, Ratio := AB42.ELISA/pTau.ELISA] %>%
+  .[, Percentile := cut(Ratio, quantile(Ratio, probs = seq(0, 1, 0.1), na.rm = TRUE),
+                      labels = FALSE, include.lowest = TRUE)] %>%
+  .[order(Percentile), ] %>%
+  .[, Percentile := factor(Percentile, levels = 1:10, labels = c("0-10%", "10-20%", "20-30%", "30-40%", "40-50%", "50-60%", 
+                                                             "60-70%", "70-80%", "80-90%", "90-100%"))]
+
+# correct sample name
+setnames(csf_annot, "SampleID", "Sample")
+
+# filter, then merge
+csf = csf %>%
+  .[, MissingCount := pmap_int(.SD, ~sum(is.na(c(...)))), .SDcols = csf_samples] %>%
+  .[MissingCount < length(csf_samples)/3, ] %>% .[, MissingCount := NULL] %>%
+  data.table::transpose(keep.names = "Sample", make.names = "Marker") %>%
+  merge(csf_annot, ., by = "Sample", all.x = FALSE, all.y = TRUE) %>%
+  .[!is.na(Percentile), ] %>%
+  .[order(Percentile, Ratio, decreasing = TRUE), ]
+
+```
+
+Average z-score across deciles of A$\beta_{42}$/p-Tau ratio, which is a proxy for the severity of AD neuropathological changes.
+
+```{r average-csf}
+
+# get marker names
+csf_adra = colnames(csf) %>% .[!(. %in% colnames(csf_annot))]
+
+# compute average z-scores across Braak stage
+csf_z = csf[, map(.SD, ~mean(..., na.rm = TRUE)), by = .(Percentile), .SDcols = csf_adra]
+
+# order columns by difference between control and AD
+csf_colorder = copy(csf_z) %>% .[, Group := c(rep("low", 4), rep("medium", 2), rep("high", 4))] %>%
+  .[, map(.SD, mean), by = Group, .SDcols = csf_adra] %>%
+  .[, ..csf_adra] %>% {.[3, ] - .[1, ]} %>% setcolorder(order(-.)) %>% names()
+
+# prepare for heatmap
+csf_hm = t(csf_z)[csf_colorder, ]
+class(csf_hm) = "numeric"
+colnames(csf_hm) = csf_z[, Percentile]
+
+# create heatmap annotation
+csf_hm_col = csf_z[, .(Percentile)] %>% as.data.frame()
+rownames(csf_hm_col) = csf_z[, Percentile]
+
+# create heatmap color palette
+csf_hm_colors = list(
+  Percentile = colorRampPalette(c("#0EAD69", "#F4E515", "#D7263D"))(10) %>% set_names(unique(csf_z[, Percentile]))
+)
+
+```
+
+### Plot CSF Heatmap
+
+Create the heatmap for the Johnson et al. CSF data.
+
+```{r plot-csf}
+
+# plot full heatmap
+csf_hm_full = plot_heatmap(hm_dat = csf_hm, hm_ann_col = csf_hm_col, hm_colors = csf_hm_colors, bounds = c(-0.8, 0.8))
+
+# save full heatmap
+ggsave(file.path(dir4, "Johnson CSF - Full Heatmap.pdf"), csf_hm_full, width = 7, height = 7)
+
+```
+
+### Plot Specific Marker
+
+Generic function for creating barplots for specific markers from Johnson et al. CSF data.
+
+```{r plot-marker}
+
+plot_marker = function(mx, idx) {
+  
+    p = ggplot(csf_z, aes(x = Percentile, y = get(mx), fill = get(mx))) +
+    geom_col() +
+    scale_fill_gradient2(low = "#5083BB", mid = "#D8DDDE", high = "#DE3F2E", midpoint = 0) +
+    ggtitle(mx) + xlab("Percentile") +
+    ylab("Z-Score") +
+    theme_light() +
+    theme(plot.title = element_text(face = "bold", color = "#30343F", size = 20, hjust = 0.5),
+          axis.title.x = element_text(face = "bold", size = 12, color = "#30343F"),
+          axis.title.y = element_text(face = "bold", size = 12, color = "#30343F"),
+          strip.text.x = element_text(size = 12, face = "bold"),
+          legend.position = "none")
+
+  ggsave(file.path(dir4, "Johnson CSF - Marker Plots", paste(idx, "-", mx, "Barplot.pdf")), p, width = 7, height = 7)
+
+}
+
+```
+
+Select and plot specific markers.
+
+```{r select-marker}
+
+# remove and recreate directory if it exists
+file.path(dir4, "Johnson CSF - Marker Plots") %>% { if(dir.exists(.)) { unlink(., recursive=TRUE); dir.create(.)} 
+  else dir.create(.) }
+
+# select markers
+mxlist = csf_hm %>% { rbind(head(., 5), tail(., 5)) } %>% rownames()
+
+# plot markers
+mxplots = iwalk(mxlist, plot_marker)
+
+```
+
+# Hypergeometric Enrichment Tests
+
+Perform hypergeometric enrichment tests. First, define a generic hypergeometric enrichment function.
+
+```{r hyper-test}
+
+hyper_test = function(geneSet1, geneSet2, label) {
+  
+  # checking for enrichment of geneSet1 in geneSet2
+  success = intersect(geneSet1, geneSet2)
+  q = length(success) # number of successes (i.e., intersection of 196 ADRA markers with DEGs)
+  
+  s = length(geneSet1) # sample size (i.e., 196 proteins)
+  m = length(geneSet2) # module size (i.e., number of DEGs)
+  n = 21306 # population size, number of genes in the universe
+  # see https://www.biorxiv.org/content/10.1101/332825v2
+  
+  cat(paste0(label, ":\n"))
+  cat(paste0("Overlap Ratio: ", q, "/", s, " = ", round(q/s*100, 4), "%", "\n"))
+  cat(paste0("Gene Set Size: ", m, "\n"))
+  
+  p = phyper(q, m, n, s, lower.tail = F)
+  cat(paste0("p-value: ", p, "\n\n"))
+  
+  return(p)
+  
+}
+
+```
+
+Define gene lists for hypergeometric enrichment tests. For the Johnson et al. bulk brain proteomics data, the column `Control-AD` is the Tukey p-value, while the column `diff.Control-AD` is average `log2(Control)` minus average `log2(AD)`.
+
+```{r gene-lists}
+
+# define directory
+hdir = file.path(ddir, "Hypergeometric Enrichment Tests")
+
+# read johnson bulk brain at p < 0.05
+bulk_0.05 = fread(file.path(hdir, "Johnson DEGs.csv")) %>%
+  .[(`with.<50%.missing?`), ] %>%
+  .[`Control-AD`< 0.05, geneName]
+
+# read grubman genes at p < 0.05 and LFC > 0.5
+grubman_0.05_0.5 = fread(file.path(hdir, "Grubman DEGs LFC-0.5 FDR-0.05.csv"))[, geneName]
+
+# retrieve simpson genes from prior chunk
+simpson_0.05 = simpson_degs[P.Value < 0.05, SYMBOL]
+
+# aggregate gene lists
+gene_lists = list(bulk_0.05, grubman_0.05_0.5, simpson_0.05)
+names(gene_lists) = c("Johnson et al. p-value < 0.05", "Grubman et al. FDR < 0.05 and LFC > 0.5", 
+                      "Simpson et al. p-value < 0.05")
+
+```
+
+Perform hypergeometric enrichment tests.
+
+```{r perform-tests}
+
+# perform test
+hyper_results = imap(gene_lists, ~hyper_test(dat[, Symbol], .x, .y))
+
+# pipe results to output
+sink(file.path(dir4, "Hypergeometric Enrichment Test Results.txt"), append = FALSE)
+hyper_results = imap(gene_lists, ~hyper_test(dat[, Symbol], .x, .y))
+sink()
+
+```

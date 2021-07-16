@@ -1,0 +1,314 @@
+---
+title: "Pathway Enrichment Analysis"
+description: |
+ This script performs pathway enrichment analyses using the Gene Ontology and Reactome databases.
+bibliography: astrocyte-review-bibliography.bib
+csl: https://www.zotero.org/styles/elsevier-vancouver
+author:
+  - first_name: "Ayush"
+    last_name: "Noori"
+    url: https://www.github.com/ayushnoori
+    affiliation: Massachusetts General Hospital
+    affiliation_url: https://www.serranopozolab.com
+    orcid_id: 0000-0003-1420-1236
+output:
+  distill::distill_article:
+    toc: true
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+```
+
+# Dependencies
+
+Load requisite packages. Note that the `tibble` package is not loaded (to preempt namespace conflicts) but the `tibble::add_row` function is explicitly called.
+
+This script also uses my personal utilities package `brainstorm`, which can be downloaded via `devtools::install_github("ayushnoori/brainstorm")`.
+
+```{r load-packages, message=FALSE, warning=FALSE}
+
+# data manipulation
+library(data.table)
+library(purrr)
+library(magrittr)
+
+# string operations
+library(stringr)
+
+# Excel manipulation
+library(openxlsx)
+
+# data visualization
+library(ggplot2)
+library(ggpubr)
+
+# utility functions
+library(brainstorm)
+
+```
+
+Note that directories are relative to the R project path.
+
+```{r define-directores}
+
+# set directories
+ddir = file.path("Data", "2 - Pathway Enrichment Analysis")
+dir2 = file.path("Results", "2 - Pathway Enrichment Analysis")
+
+```
+
+# Read Data
+
+Read data, then input the gene symbols to <http://www.gsea-msigdb.org/gsea/msigdb/annotate.jsp>. Compute overlaps separately against the Gene Ontology (`GO:BP: GO biological process`, `GO:CC: GO cellular component`, `GO:MF: GO molecular function`) [@ashburner_gene_2000; @the_gene_ontology_consortium_gene_2019] and Reactome (`CP:REACTOME: Reactome gene sets`) [@jassal_reactome_2020] databases available from the Molecular Signatures Database [@liberzon_molecular_2011]. For each analysis, show the `top 100` gene sets with FDR *q*-value less than `1` (i.e., no *q*-value cutoff). Place output files in the `Data/2 - Pathway Enrichment Analysis` directory.
+
+```{r read-data}
+
+# read data
+markers = fread(file.path("Data", "ADRA Protein Set.csv"))
+# cat(markers[, Symbol])
+
+```
+
+Read MSigDB mapping file (version 7.2), which was downloaded as an XML file from <https://data.broadinstitute.org/gsea-msigdb/msigdb/release/7.2/msigdb_v7.2.xml>, parsed in Excel, and filtered for GO/Reactome pathways only.
+
+```{r read-mapping}
+
+# read mapping file
+mapDB = fread(file.path(ddir, "MSigDB Mapping v7.3.csv")) %>%
+  .[, .(STANDARD_NAME, EXACT_SOURCE, MEMBERS_SYMBOLIZED, MEMBERS)]
+setnames(mapDB, c("Pathway", "ID", "Symbol", "ENTREZ"))
+
+```
+
+# Parse Pathway Enrichment Results
+
+Define Excel styles for workbook object.
+
+```{r define-styles}
+
+# header style
+hs = createStyle(fontColour = "#FAF3DD", fgFill = "#337CA0", fontName = "Arial Black", halign = "center", valign = "center", textDecoration = "Bold", border = "Bottom", borderStyle = "thick", fontSize = 14)
+
+# row style #1
+r1 = createStyle(fontColour = "#363635", fgFill = "#FAF3DD", fontName = "Arial", fontSize = 10)
+
+# row style #2
+r2 = createStyle(fontColour = "#363635", fgFill = "#C4E4E9", fontName = "Arial", fontSize = 10)
+
+# subheader style
+sh = createStyle(fontColour = "#363635", fgFill = "#FFA69E", fontName = "Arial", textDecoration = "Bold", border = "TopBottom", borderStyle = "thick")
+
+```
+
+Define function to add sheet to workbook, where `clus` is a vector of cluster labels, `sheet` is the worksheet name, and `header` is the vector of header indices.
+
+```{r add-sheet}
+
+add_sheet = function(datWB, clus, sheet, header, wb) {
+  
+  # add worksheet
+  addWorksheet(wb, sheetName = sheet)
+  writeDataTable(wb, sheet, x = datWB, tableStyle = "TableStyleMedium15", headerStyle = hs, bandedRows = FALSE)
+  setColWidths(wb, sheet, cols = 1:10, widths = c("auto", 60, 8, 8, 8, 16, 16, 20, 20, 200))
+  freezePane(wb, sheet, firstRow = TRUE, firstCol = FALSE)
+  
+  # add styling
+  even = clus %% 2 == 0; even[is.na(even)] = FALSE
+  addStyle(wb, sheet, r1, rows = which(even) + 1, cols = 1:10, gridExpand = T)
+  addStyle(wb, sheet, r2, rows = which(!even) + 1, cols = 1:10, gridExpand = T)
+  addStyle(wb, sheet, sh, rows = header + 1, cols = 1:10, gridExpand = T)
+  
+}
+
+```
+
+Parse, cluster, and tabulate pathway enrichment results. The similarity matrix is created by computing the Jaccard similarity coefficient, then converted to Jaccard distance by subtracting from 1.
+
+```{r parse-pathways}
+
+# function to compute Jaccard similarity coefficient
+jaccard = function(a, b) {return(length(intersect(a,b))/length(union(a, b)))}
+
+# read pathway enrichment results
+parse_pathways = function(fname, wb) {
+  
+  # read file
+  dat = fread(file.path(ddir, fname))
+  setnames(dat, c("Pathway", "K", "Description", "k", "Ratio", "p", "q"))
+  
+  # merge with mapping, clean pathway names, get member list
+  dat = merge(dat, mapDB, by = "Pathway", all.x = TRUE) %>%
+    .[, Pathway := gsub("_", " ", Pathway)] %>%
+    .[, Pathway := sub(".*? ", "", Pathway)] %>%
+    .[, Members := strsplit(ENTREZ, ",")]
+  
+  # create pairwise similarity matrix using Jaccard index
+  sim = dat[, Members] %>% outer(., ., FUN = Vectorize(jaccard))
+  rownames(sim) = dat[, ID]; colnames(sim) = dat[, ID]
+  
+  # specify number of clusters
+  nclust = 15
+  # h = 0.95
+  
+  # convert to dissimilarity matrix, then perform hierarchical clustering
+  pclust = as.dist(1 - sim) %>%
+    hclust() %>%
+    cutree(k = nclust) %>%
+    # cutree(h = 0.95) %>%
+    data.table(ID = names(.), Cluster = .)
+  
+  # get number of clusters
+  # nclust = pclust[, length(unique(Cluster))]
+  # print(nclust)
+  
+  # merge with cluster, then group by cluster and order by q-value
+  dat = merge(dat, pclust, by = "ID", all.x = TRUE) %>%
+    .[order(Cluster, q), ] %>%
+    .[, .(ID, Pathway, K, k, Ratio, p, q, Cluster, Symbol, ENTREZ, Description)]
+  
+  # rename columns for Excel workbook
+  datWB = copy(dat)
+  setnames(datWB, c("ID", "Pathway", "K (Genes in Pathway)", "k (Genes in Overlap)", "k/K", "p-value", "FDR q-value", "Cluster", "Symbol", "ENTREZ", "Description"))
+  header = datWB[, which(!duplicated(Cluster))] + 0:(nclust - 1)
+  
+  # add rows for manual annotatioN
+  for (z in header) {
+    datWB = tibble::add_row(datWB, .before = z)
+    datWB[z, ID := paste0("Pathway #", datWB[z + 1, "Cluster"])]
+  }
+  
+  # get cluster and sheet name, add to workbook
+  clus = datWB[, Cluster]; datWB[, Cluster := NULL]
+  sheet = fname %>% gsub("\\s+Enrichment\\.csv$", "", .)
+  add_sheet(datWB, clus, sheet, header, wb)
+  
+  # return original data
+  return(dat)
+  
+}
+
+```
+
+Map `pathway_results` function over each analysis (i.e., GO: BP, GO: CC, GO: MF, and Reactome).
+
+```{r map-pathway}
+
+# get file names
+files = list.files(path = ddir, pattern = "Enrichment\\.csv$")
+
+# create workbook object
+grpWB = createWorkbook()
+
+# map over file names
+pathways = map(files, ~parse_pathways(.x, grpWB))
+
+```
+
+Save workbook object.
+
+```{r save-workbook}
+
+# define file paths
+raw = file.path(dir2, "Pathway Enrichment Analysis Raw.xlsx")
+annot = file.path(dir2, "Pathway Enrichment Analysis Annotated.xlsx")
+
+# save workbooks
+saveWorkbook(grpWB, raw, overwrite = TRUE)
+if(!file.exists(annot)) { file.copy(raw, annot) }
+
+```
+
+# Aggregate Annotated Pathways
+
+Complete pathway annotations by manually editing the file `Pathway Enrichment Analysis Annotated.xlsx`. After annotations are complete, execute the following chunks which compute cluster statistics.
+
+```{r compute-cluster}
+
+compute_cluster = function(sheet) {
+  
+  # read data
+  dat = read.xlsx(annot, sheet = sheet, check.names = TRUE) %>% as.data.table()
+  setnames(dat,  c("ID", "Pathway", "K", "k", "Ratio", "p", "q",
+                   "Symbol", "ENTREZ", "Description"))
+  
+  # get header indices
+  header = dat[, which(is.na(Description))]
+  
+  # extract cluster labels
+  clus = dat[header, .(ID, Pathway)]
+  nclus = c(header[-1], nrow(dat) + 1) - (header + 1)
+  
+  # re-create cluster labels
+  dat = dat[-header, ][, Cluster := rep(clus$ID, nclus)]
+  
+  # compute cluster statistics
+  clusdat = dat[, .(Ratio = sum(k)/sum(K), logQ = mean(-log10(q))), by = Cluster]
+  clus = merge(clus, clusdat, by.x = "ID", by.y = "Cluster")[, Database := sheet]
+  
+  return(clus)
+  
+}
+
+```
+
+Map `compute_cluster` function over each sheet of the annotations workbook (i.e., GO: BP, GO: CC, GO: MF, and Reactome) to compute cluster statistics.
+
+```{r map-cluster}
+
+# get file names
+sheets = getSheetNames(annot)
+
+# map over file names
+clusters = map_dfr(sheets, compute_cluster)
+
+# refactor cluster database labels and order by -log10(FDR q-value)
+clusters = clusters %>%
+  .[, ID := NULL] %>%
+  .[, Database := factor(Database, levels = c("GO BP", "GO CC", "GO MF", "Reactome"), labels = c("GO: Biological Process", "GO: Cellular Component", "GO: Molecular Function", "Reactome"))] %>%
+  .[order(Database, logQ), ]
+
+```
+
+Function to plot pathway data in a barplot for each enrichment analysis (i.e., for each database). Note that `facet_wrap` is used for visual purposes only. Each plot created has a single facet.
+
+```{r plot-pathways}
+
+plot_pathways = function(datDB, DB) {
+  
+  datDB[, Pathway := factor(Pathway, levels = Pathway)]
+
+  p = ggplot(datDB, aes(x = Pathway, y = logQ))+ # fill = Ratio
+    geom_col() +
+    coord_flip() +
+    # scale_fill_gradient(low="#FFD166", high="#A63446") +
+    facet_wrap(Database ~ ., scales = "free", ncol = 1) +
+    # labs(fill = "Gene Ratio") + 
+    scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05))) +
+    theme_light() +
+    theme(plot.title = element_text(size = 16, color = "black", face = "bold", hjust = 0.5),
+          axis.title.x = element_blank(), axis.title.y = element_blank(),
+          legend.title = element_text(face = "bold"),
+          strip.text = element_text(size=12, color = "black", face="bold"),
+          strip.background = element_rect(color=NA, fill="#D9D9D9", size=1, linetype="solid"))
+  
+  return(p)
+
+}
+
+```
+
+Apply function over each database to create aggregated plot.
+
+```{r plot-all}
+
+# map over each database
+cplots = imap(split(clusters, by = "Database"), plot_pathways) %>%
+  ggarrange(plotlist = ., ncol = 1, nrow = 4, align = "hv") %>%
+  annotate_figure(bottom = text_grob(bquote(bold(-log[10]*'(FDR '*bolditalic(q)*'-value)')),
+                                     size = 16, color = "black", hjust = 0))
+
+# save figure
+ggsave(file.path(dir2, "Pathway Enrichment Analysis Barplot.pdf"), cplots, height = 16, width = 12)
+
+```

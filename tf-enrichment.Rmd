@@ -1,0 +1,317 @@
+---
+title: "Transcription Factor Enrichment Analysis"
+description: |
+ This script performs transcription factor analyses using TFEA.ChIP and Enrichr.
+bibliography: astrocyte-review-bibliography.bib
+csl: https://www.zotero.org/styles/elsevier-vancouver
+author:
+  - first_name: "Ayush"
+    last_name: "Noori"
+    url: https://www.github.com/ayushnoori
+    affiliation: Massachusetts General Hospital
+    affiliation_url: https://www.serranopozolab.com
+    orcid_id: 0000-0003-1420-1236
+output:
+  distill::distill_article:
+    toc: true
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+```
+
+# Dependencies
+
+Load requisite packages. This script uses my personal utilities package `brainstorm`, which can be downloaded via `devtools::install_github("ayushnoori/brainstorm")`.
+
+```{r load-packages, message=FALSE, warning=FALSE}
+
+# data manipulation
+library(data.table)
+library(purrr)
+library(magrittr)
+
+# TFEA package
+library(TFEA.ChIP)
+
+# access Enrichr API
+library(httr)
+library(rjson)
+
+# Excel manipulation
+library(openxlsx)
+
+# string manipulation
+library(stringr)
+
+# data visualization
+library(ggplot2)
+library(ggpubr)
+library(plotly)
+library(htmlwidgets)
+library(RColorBrewer)
+
+# utility functions
+library(brainstorm)
+
+```
+
+Note that directories are relative to the R project path.
+
+```{r define-directores}
+
+# set directories
+ddir = file.path("Data", "3 - Transcription Factor Enrichment Analysis")
+dir3 = file.path("Results", "3 - Transcription Factor Enrichment Analysis")
+
+```
+
+# Read Data
+
+Read ADRA protein set and load ChIP-Seq experiment data [@lachmann_chea_2010; @dunham_integrated_2012; @fishilevich_genehancer_2017; @cheneby_remap_2018].
+
+```{r read-data}
+
+# read data
+dat = fread(file.path("Data", "ADRA Protein Set.csv"))
+
+# load ChIP-Seq experiment data
+load(file.path(ddir, "ReMap+GH_doubleElite.Rdata"))
+set_user_data(MetaData, Mat01)
+
+```
+
+# `TFEA.ChIP` Analysis
+
+Perform Transcription Factor Enrichment Analysis (TFEA) using the `TFEA.ChIP` package [@puente-santamaria_tfeachip_2019]. As a control list is not provided, use all human genes NOT in the ADRA marker set as the control.
+
+```{r tfea-analysis}
+
+# convert ADRA gene symbols to ENTREZ
+entrez = GeneID2entrez(gene.IDs = dat[, Symbol])
+
+# compute contingency matrices
+CM = contingency_matrix(entrez)
+pval = getCMstats(CM) %>% as.data.table()
+
+# compute confidence intervals
+CI = map(CM, ~fisher.test(.x, conf.int = TRUE, conf.level = 0.95)$conf.int) %>%
+  { data.table(Accession = names(.), CI.left = map(., 1), CI.right = map(., 2)) }
+
+# merge with confidence intervals
+pval = merge(pval, CI, by = "Accession", all.x = TRUE)[order(-abs(distance)), ]
+
+# write to Excel file
+write.xlsx(pval, file.path(dir3, "TFEA Association Test.xlsx"), asTable = TRUE, tableStyle = "TableStyleMedium19")
+
+```
+
+# `TFEA.ChIP` Volcano Plot
+
+Select transcription factors to highlight and define colors.
+
+```{r select-tfs}
+
+# identify top TFs
+topTFs = summary(as.factor(pval[1:200, TF]))
+print(topTFs[order(-topTFs)][1:5])
+
+# select top TFs
+TF = c("CTCF", "ESR1")
+names(TF) = TF
+
+# select plotting colors
+TFcol = c("#00FFD9", "#FF006F")
+
+```
+
+Create interactive volcano plot of transcription factor enrichment analysis results.
+
+```{r plot-tfs}
+
+# create volcano plot
+CMplot = plot_CM(pval, plot_title = "", specialTF = TF, TF_colors = TFcol)
+
+# create axis sequences
+xseq = pval[, log10.adj.pVal] %>% { seq(min(., na.rm = TRUE), max(., na.rm = TRUE), by = 0.1) }
+yseq = pval[, log2.OR] %>% { seq(min(., na.rm = TRUE), max(., na.rm = TRUE), by = 0.1) }
+
+# edit volcano plot
+CMplot = CMplot %>%
+  
+  # add p-value threshold line
+  add_lines(x = -log10(0.05), y = yseq, line = list(dash="dash", width = 1.5, color="red"), inherit = FALSE, hoverinfo = "none", name = "P-Value < 0.05", visible = "legendonly") %>%
+  
+  # add OR threshold lines
+  add_lines(x = xseq, y = log2(1.5), line = list(dash="dash", width = 1.5, color="blue"), inherit = FALSE, hoverinfo = "none", name = "OR > 1.5", visible = "legendonly") %>%
+add_lines(x = xseq, y = -log2(1.5), line = list(dash="dash", width = 1.5, color="blue"), inherit = FALSE, hoverinfo = "none", name = "OR < -1.5", visible = "legendonly") %>%
+  
+  # add axis labels
+layout(xaxis = list(title = "-Log<sub>10</sub> Adjusted P-Value"), yaxis = list(title = "Log<sub>2</sub> Odds Ratio"))  %>%
+  
+  # configure SVG output
+  config(toImageButtonOptions = list(format = "svg", filename = "TFEA Plot SVG", width = 2000, height = 1200))
+
+# save figure
+htmlwidgets::saveWidget(CMplot, file.path(dir3, "TFEA Plot.html"))
+saveRDS(CMplot, file.path(dir3, "TFEA Plotly Object.rds"))
+
+```
+
+Create enhanced, static volcano plot of transcription factor enrichment analysis results.
+
+```{r plot-volcano}
+
+# prepare data
+pval_vp = copy(pval) %>%
+  .[, Highlight := TF] %>%
+  .[!(Highlight %in% c("CTCF", "ESR1")), Highlight := "Other"]
+
+# plot data
+vp = ggplot(pval_vp, aes(x = log2.OR, y = log10.adj.pVal, fill = Highlight)) +
+  geom_hline(yintercept = 0, color = "black", size = 0.3) +
+  geom_vline(xintercept = -1.99, color = "black", size = 0.3) +
+  geom_point(alpha = 0.3, size = 1.2, shape = 21, stroke = 0) +
+  scale_fill_manual("", values = c("#01CB5F", "#F17F29", "#687278")) +
+  geom_point(data = pval[TF == "CTCF"], fill = "#01CB5F", size = 1.2, shape = 21, stroke = 0) +
+  geom_point(data = pval[TF == "ESR1"], fill = "#F17F29", size = 1.2, shape = 21, stroke = 0) +
+  geom_hline(yintercept = -log10(0.05), linetype="dashed", color = "#EF476F", size = 0.3) +
+  geom_vline(xintercept = -log2(1.5), linetype="dashed", color = "#3066BE", size = 0.3) +
+  geom_vline(xintercept = log2(1.5), linetype="dashed", color = "#3066BE", size = 0.3) +
+  coord_cartesian(xlim = c(-1.99, 1.99), ylim = c(-0.01, 1.99), expand = FALSE) +
+  xlab(bquote(bold(log[2]*' Fold-Change'))) +
+  ylab(bquote(bold(-log[10]*' FDR '*bolditalic(p)*'-value'))) +
+  theme_light() +
+  theme(legend.text = element_text(size = 10, face = "bold"),
+        legend.position = c(0.1, 0.93),
+        legend.background = element_rect(fill = NA, color = NA),
+        axis.ticks = element_line(color = "black", size = 0.3),
+        panel.border = element_blank())
+
+# save plot
+# ggsave(file.path(dir3, "TFEA Volcano Plot.pdf"), vp, width = 8, height = 5.5)
+ggsave(file.path(dir3, "TFEA Volcano Plot.svg"), vp, width = 8, height = 5.5)
+ggsave(file.path(dir3, "TFEA Volcano Plot.pdf"), vp, width = 8, height = 5.5)
+
+```
+
+# `Enrichr` Analysis
+
+Perform TFEA using the `Enrichr` API [@kuleshov_enrichr_2016].
+
+```{r define-parameters}
+
+# define API call parameters
+my_genes = gsub("^\\s+|\\s+$", "", dat[, Symbol])
+my_library = "ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X"
+my_description = "ADRA Marker Set"
+
+```
+
+Function for API call. This function was adapted from the Python scripts provided in the Enrichr API documentation [here](https://maayanlab.cloud/Enrichr/help#api).
+
+```{r enrichr-api}
+
+enrichr_API = function(genes, description, library) {
+  
+  # create API call to add gene list
+  add_url = "http://amp.pharm.mssm.edu/Enrichr/addList"
+  genes_str = paste(genes, collapse="\n")
+  payload = list(list = genes_str, description = description)
+  
+  # make and parse API call
+  add_request = httr::POST(url = add_url, body = payload)
+  add_response = httr::content(add_request, as = "text", encoding = "UTF-8") %>% fromJSON()
+  
+  # wait before next call
+  Sys.sleep(0.5)
+  
+  # create URL for next API call to calculate enrichment
+  enrich_url = paste0("http://amp.pharm.mssm.edu/Enrichr/enrich", "?userListId=",
+                      add_response$userListId, "&backgroundType=", library)
+  
+  # make and parse next API call
+  request = httr::GET(url = enrich_url)
+  response = httr::content(request, as = "text", encoding = "UTF-8") %>% fromJSON() %>% .[[1]]
+  
+  # convert to data.table
+  convDT = function(res) { res[[6]] = toString(res[[6]]); return(res)  }
+  response = map(response, convDT) %>% rbindlist()
+  setnames(response, c("Rank", "Term", "p.value", "z.score", "combined.score", "Genes", "adj.p.value", "old.p.value", "old.adj.p.value"))
+  
+  # calculate -log10(adj. p-value), then filter
+  response[, log.adj.p := -log10(adj.p.value)]
+  response = response[, .(Term, p.value, adj.p.value, log.adj.p, z.score, combined.score, Genes)]
+  
+  # return response object
+  return(response)
+
+}
+
+```
+
+Make API call to calculate enrichment.
+
+```{r enrichr-analysis}
+
+# make API call
+enrichr = enrichr_API(my_genes, my_description, my_library)
+
+# write to Excel file
+write.xlsx(enrichr, file.path(dir3, "Enrichr Results.xlsx"), asTable = TRUE, tableStyle = "TableStyleMedium19")
+
+```
+
+# `Enrichr` Plot
+
+Function to plot `Enrichr` results.
+
+```{r plot-enrichr}
+
+plot_enrichr = function(enrichr_results, library = NULL) {
+  
+  # for TFEA only
+  enrichr_results[, Term := word(Term, 1)]
+  
+  # select top TFs
+  enrichr_results = enrichr_results[order(-log.adj.p), ][1:10, ]
+  enrichr_results[, Term := factor(Term, levels = rev(Term))]
+  
+  # create barplot
+  p = ggplot(enrichr_results, aes(x = Term, y = log.adj.p, fill = log.adj.p))+
+    geom_col() +
+    coord_flip() +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
+    geom_text(x = 1.7, y = -log10(0.05) + 0.03, label = "italic(p)*'-value < 0.05'", angle = 270, size = 2.5, parse = TRUE) +
+    scale_fill_gradient(low="#FFD166", high="#A63446") +
+    scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05))) +
+    theme_light() +
+    theme(plot.title = element_text(size = 16, color = "black", face = "bold", hjust = 0.5),
+          axis.title.x = element_blank(), axis.title.y = element_blank(),
+          legend.position = "none",
+          strip.text = element_text(size=12, color = "black", face="bold"),
+          strip.background = element_rect(color=NA, fill="#D9D9D9", size=1, linetype="solid"))
+  
+  if(!is.null(library)) {
+    enrichr_results[, Library := library]
+    p = p + facet_wrap(Library ~ ., scales = "free", ncol = 1)
+  } else {
+    p = p + ylab(bquote(bold(-log[10]*'(adj. '*bolditalic(p)*'-value)'))) + theme(axis.title.x = element_text(size = 14, color = "black"))
+  }
+  
+  return(p)
+
+}
+
+```
+
+Save plots for multiple `Enrichr` libraries. To create plots of multiple `Enrichr` results, use `map` as `plot_enrichr(enrichr, library_name)`, then use `ggarrange(plotlist = ., ncol = 1, align = "hv")` to create composite figure.
+
+```{r multiple-enrichr}
+
+cplots = plot_enrichr(enrichr) # %>% annotate_figure(bottom = text_grob(bquote(bold(-log[10]*'(adj. '*bolditalic(p)*'-value)')), size = 14, color = "black", hjust = 0))
+
+# save figure
+ggsave(file.path(dir3, "Enrichr Barplot.pdf"), cplots, height = 4, width = 12)
+
+```
