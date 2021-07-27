@@ -1937,6 +1937,7 @@ code span.wa { color: #5e5e5e; font-style: italic; } /* Warning */
     --text-color:      rgba(0, 0, 0, 0.5);
   }
 
+
   /*-- WEBSITE HEADER + FOOTER --*/
   /* These properties only apply to Distill sites and blogs  */
 
@@ -1952,7 +1953,7 @@ code span.wa { color: #5e5e5e; font-style: italic; } /* Warning */
     --text-color:       rgba(255, 255, 255, 0.8);
     --text-size:        15px;
     --hover-color:      white;
-    --bkgd-color:       #7D451B;
+    --bkgd-color:       #999999;
   }
 
   /*-- Additional custom styles --*/
@@ -1987,7 +1988,7 @@ code span.wa { color: #5e5e5e; font-style: italic; } /* Warning */
   h1 {
     margin-top: 2em !important;
     font-size: 36px !important;
-    color: #7D451B !important;
+    color: #7F5539 !important;
   }
 
   d-article h1:nth-child(2) {
@@ -2646,7 +2647,7 @@ Enrichment Analyses
 </div>
 </div>
 <h1 id="plot-chord-graph">Plot Chord Graph</h1>
-<p>First, transform network to adjacency matrix, then group by function. We also define a utility <code>merge</code> function to retrieve the group for an arbitrary set of symbols - this will be useful later.</p>
+<p>First, transform the network to an adjacency matrix, then group by function. We also define a utility <code>merge</code> function to retrieve the group for an arbitrary set of symbols - this will be useful later.</p>
 <div class="layout-chunk" data-layout="l-body">
 <div class="sourceCode">
 <pre class="sourceCode r"><code class="sourceCode r"><span class='co'># utility function to retrieve group</span>
@@ -2705,7 +2706,7 @@ Enrichment Analyses
 </code></pre>
 </div>
 </div>
-<p>Then, create network graph.</p>
+<p>Then, create the network graph.</p>
 <div class="layout-chunk" data-layout="l-body">
 <div class="sourceCode">
 <pre class="sourceCode r"><code class="sourceCode r"><span class='co'># create network graph</span>
@@ -2736,7 +2737,7 @@ Enrichment Analyses
 </div>
 </div>
 <h1 id="hub-gene-networks">Hub Gene Networks</h1>
-<p>Create networks for top hub markers emphasizing their connectivity. First, define a function</p>
+<p>Create networks for top hub markers which emphasize their connectivity.</p>
 <div class="layout-chunk" data-layout="l-body">
 <div class="sourceCode">
 <pre class="sourceCode r"><code class="sourceCode r"><span class='co'># remove and recreate directory if it exists</span>
@@ -2808,7 +2809,7 @@ Enrichment Analyses
 </div>
 </div>
 <h1 id="interactive-network-graph">Interactive Network Graph</h1>
-<p>Create interactive network graph (with manual layout identical to above).</p>
+<p>Create an interactive network graph (with the manual layout identical to above).</p>
 <div class="layout-chunk" data-layout="l-body">
 <div class="sourceCode">
 <pre class="sourceCode r"><code class="sourceCode r"><span class='co'># get network data</span>

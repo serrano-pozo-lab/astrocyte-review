@@ -102,7 +102,8 @@ CI = map(CM, ~fisher.test(.x, conf.int = TRUE, conf.level = 0.95)$conf.int) %>%
 pval = merge(pval, CI, by = "Accession", all.x = TRUE)[order(-abs(distance)), ]
 
 # write to Excel file
-write.xlsx(pval, file.path(dir3, "TFEA Association Test.xlsx"), asTable = TRUE, tableStyle = "TableStyleMedium19")
+write.xlsx(pval, file.path(dir3, "TFEA Association Test.xlsx"),
+           asTable = TRUE, tableStyle = "TableStyleMedium19")
 
 ```
 
@@ -140,17 +141,28 @@ yseq = pval[, log2.OR] %>% { seq(min(., na.rm = TRUE), max(., na.rm = TRUE), by 
 CMplot = CMplot %>%
   
   # add p-value threshold line
-  add_lines(x = -log10(0.05), y = yseq, line = list(dash="dash", width = 1.5, color="red"), inherit = FALSE, hoverinfo = "none", name = "P-Value < 0.05", visible = "legendonly") %>%
+  add_lines(x = -log10(0.05), y = yseq,
+            line = list(dash = "dash", width = 1.5, color = "red"),
+            inherit = FALSE, hoverinfo = "none", name = "P-Value < 0.05",
+            visible = "legendonly") %>%
   
   # add OR threshold lines
-  add_lines(x = xseq, y = log2(1.5), line = list(dash="dash", width = 1.5, color="blue"), inherit = FALSE, hoverinfo = "none", name = "OR > 1.5", visible = "legendonly") %>%
-add_lines(x = xseq, y = -log2(1.5), line = list(dash="dash", width = 1.5, color="blue"), inherit = FALSE, hoverinfo = "none", name = "OR < -1.5", visible = "legendonly") %>%
+  add_lines(x = xseq, y = log2(1.5),
+            line = list(dash = "dash", width = 1.5, color = "blue"),
+            inherit = FALSE, hoverinfo = "none", name = "OR > 1.5",
+            visible = "legendonly") %>%
+  add_lines(x = xseq, y = -log2(1.5),
+            line = list(dash = "dash", width = 1.5, color = "blue"),
+            inherit = FALSE, hoverinfo = "none", name = "OR < -1.5",
+            visible = "legendonly") %>%
   
   # add axis labels
-layout(xaxis = list(title = "-Log<sub>10</sub> Adjusted P-Value"), yaxis = list(title = "Log<sub>2</sub> Odds Ratio"))  %>%
+layout(xaxis = list(title = "-Log<sub>10</sub> Adjusted P-Value"),
+       yaxis = list(title = "Log<sub>2</sub> Odds Ratio"))  %>%
   
   # configure SVG output
-  config(toImageButtonOptions = list(format = "svg", filename = "TFEA Plot SVG", width = 2000, height = 1200))
+config(toImageButtonOptions = list(format = "svg", filename = "TFEA Plot SVG",
+                                   width = 2000, height = 1200))
 
 # save figure
 htmlwidgets::saveWidget(CMplot, file.path(dir3, "TFEA Plot.html"))
@@ -237,7 +249,9 @@ enrichr_API = function(genes, description, library) {
   # convert to data.table
   convDT = function(res) { res[[6]] = toString(res[[6]]); return(res)  }
   response = map(response, convDT) %>% rbindlist()
-  setnames(response, c("Rank", "Term", "p.value", "z.score", "combined.score", "Genes", "adj.p.value", "old.p.value", "old.adj.p.value"))
+  setnames(response, c("Rank", "Term", "p.value", "z.score",
+                       "combined.score", "Genes", "adj.p.value",
+                       "old.p.value", "old.adj.p.value"))
   
   # calculate -log10(adj. p-value), then filter
   response[, log.adj.p := -log10(adj.p.value)]
@@ -258,7 +272,8 @@ Make API call to calculate enrichment.
 enrichr = enrichr_API(my_genes, my_description, my_library)
 
 # write to Excel file
-write.xlsx(enrichr, file.path(dir3, "Enrichr Results.xlsx"), asTable = TRUE, tableStyle = "TableStyleMedium19")
+write.xlsx(enrichr, file.path(dir3, "Enrichr Results.xlsx"),
+           asTable = TRUE, tableStyle = "TableStyleMedium19")
 
 ```
 
@@ -282,7 +297,9 @@ plot_enrichr = function(enrichr_results, library = NULL) {
     geom_col() +
     coord_flip() +
     geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
-    geom_text(x = 1.7, y = -log10(0.05) + 0.03, label = "italic(p)*'-value < 0.05'", angle = 270, size = 2.5, parse = TRUE) +
+    geom_text(x = 1.7, y = -log10(0.05) + 0.03,
+              label = "italic(p)*'-value < 0.05'", angle = 270,
+              size = 2.5, parse = TRUE) +
     scale_fill_gradient(low="#FFD166", high="#A63446") +
     scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.05))) +
     theme_light() +
@@ -296,7 +313,9 @@ plot_enrichr = function(enrichr_results, library = NULL) {
     enrichr_results[, Library := library]
     p = p + facet_wrap(Library ~ ., scales = "free", ncol = 1)
   } else {
-    p = p + ylab(bquote(bold(-log[10]*'(adj. '*bolditalic(p)*'-value)'))) + theme(axis.title.x = element_text(size = 14, color = "black"))
+    p = p + 
+      ylab(bquote(bold(-log[10]*'(adj. '*bolditalic(p)*'-value)'))) +
+      theme(axis.title.x = element_text(size = 14, color = "black"))
   }
   
   return(p)
@@ -305,13 +324,16 @@ plot_enrichr = function(enrichr_results, library = NULL) {
 
 ```
 
-Save plots for multiple `Enrichr` libraries. To create plots of multiple `Enrichr` results, use `map` as `plot_enrichr(enrichr, library_name)`, then use `ggarrange(plotlist = ., ncol = 1, align = "hv")` to create composite figure.
+Finally, create and save the `Enrichr` plot.
 
 ```{r multiple-enrichr}
 
-cplots = plot_enrichr(enrichr) # %>% annotate_figure(bottom = text_grob(bquote(bold(-log[10]*'(adj. '*bolditalic(p)*'-value)')), size = 14, color = "black", hjust = 0))
+# create plot
+cplots = plot_enrichr(enrichr)
 
 # save figure
 ggsave(file.path(dir3, "Enrichr Barplot.pdf"), cplots, height = 4, width = 12)
 
 ```
+
+To create plots of multiple `Enrichr` libraries, apply `purrr::map` over the library names (i.e., where the function argument `.f` is `plot_enrichr(enrichr, library_name)`), then use `ggarrange(plotlist = ., ncol = 1, align = "hv")` to create a composite figure.

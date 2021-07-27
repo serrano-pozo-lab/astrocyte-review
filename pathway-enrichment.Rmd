@@ -88,16 +88,23 @@ Define Excel styles for workbook object.
 ```{r define-styles}
 
 # header style
-hs = createStyle(fontColour = "#FAF3DD", fgFill = "#337CA0", fontName = "Arial Black", halign = "center", valign = "center", textDecoration = "Bold", border = "Bottom", borderStyle = "thick", fontSize = 14)
+hs = createStyle(fontColour = "#FAF3DD", fgFill = "#337CA0",
+                 fontName = "Arial Black", halign = "center",
+                 valign = "center", textDecoration = "Bold",
+                 border = "Bottom", borderStyle = "thick", fontSize = 14)
 
 # row style #1
-r1 = createStyle(fontColour = "#363635", fgFill = "#FAF3DD", fontName = "Arial", fontSize = 10)
+r1 = createStyle(fontColour = "#363635", fgFill = "#FAF3DD",
+                 fontName = "Arial", fontSize = 10)
 
 # row style #2
-r2 = createStyle(fontColour = "#363635", fgFill = "#C4E4E9", fontName = "Arial", fontSize = 10)
+r2 = createStyle(fontColour = "#363635", fgFill = "#C4E4E9",
+                 fontName = "Arial", fontSize = 10)
 
 # subheader style
-sh = createStyle(fontColour = "#363635", fgFill = "#FFA69E", fontName = "Arial", textDecoration = "Bold", border = "TopBottom", borderStyle = "thick")
+sh = createStyle(fontColour = "#363635", fgFill = "#FFA69E",
+                 fontName = "Arial", textDecoration = "Bold",
+                 border = "TopBottom", borderStyle = "thick")
 
 ```
 
@@ -169,7 +176,9 @@ parse_pathways = function(fname, wb) {
   
   # rename columns for Excel workbook
   datWB = copy(dat)
-  setnames(datWB, c("ID", "Pathway", "K (Genes in Pathway)", "k (Genes in Overlap)", "k/K", "p-value", "FDR q-value", "Cluster", "Symbol", "ENTREZ", "Description"))
+  setnames(datWB, c("ID", "Pathway", "K (Genes in Pathway)",
+                    "k (Genes in Overlap)", "k/K", "p-value", "FDR q-value",
+                    "Cluster", "Symbol", "ENTREZ", "Description"))
   header = datWB[, which(!duplicated(Cluster))] + 0:(nclust - 1)
   
   # add rows for manual annotatioN
@@ -265,7 +274,11 @@ clusters = map_dfr(sheets, compute_cluster)
 # refactor cluster database labels and order by -log10(FDR q-value)
 clusters = clusters %>%
   .[, ID := NULL] %>%
-  .[, Database := factor(Database, levels = c("GO BP", "GO CC", "GO MF", "Reactome"), labels = c("GO: Biological Process", "GO: Cellular Component", "GO: Molecular Function", "Reactome"))] %>%
+  .[, Database := factor(
+    Database,
+    levels = c("GO BP", "GO CC", "GO MF", "Reactome"),
+    labels = c("GO: Biological Process", "GO: Cellular Component",
+               "GO: Molecular Function", "Reactome"))] %>%
   .[order(Database, logQ), ]
 
 ```

@@ -380,7 +380,7 @@ plot_circos(sub, c(2, 15), "Circos Plot with Labels.pdf", 18, 19, TRUE)
 
 # Plot Chord Graph
 
-First, transform network to adjacency matrix, then group by function. We also define a utility `merge` function to retrieve the group for an arbitrary set of symbols - this will be useful later.
+First, transform the network to an adjacency matrix, then group by function. We also define a utility `merge` function to retrieve the group for an arbitrary set of symbols - this will be useful later.
 
 ```{r transform-adjacency}
 
@@ -443,7 +443,7 @@ lyt = graphlayouts::layout_with_stress(sub, weights = el[, Weights]) %>%
 
 ```
 
-Then, create network graph.
+Then, create the network graph.
 
 ```{r network-graph}
 
@@ -477,7 +477,7 @@ ggsave(file.path(dir1, "Methods Graph.svg"), methods_network, width = 10, height
 
 # Hub Gene Networks
 
-Create networks for top hub markers emphasizing their connectivity. First, define a function
+Create networks for top hub markers which emphasize their connectivity.
 
 ```{r hub-network}
 
@@ -551,7 +551,7 @@ cat("DONE")
 
 # Interactive Network Graph
 
-Create interactive network graph (with manual layout identical to above).
+Create an interactive network graph (with the manual layout identical to above).
 
 ```{r interactive-network}
 

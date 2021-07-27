@@ -1941,6 +1941,7 @@ code span.wa { color: #5e5e5e; font-style: italic; } /* Warning */
     --text-color:      rgba(0, 0, 0, 0.5);
   }
 
+
   /*-- WEBSITE HEADER + FOOTER --*/
   /* These properties only apply to Distill sites and blogs  */
 
@@ -1956,7 +1957,7 @@ code span.wa { color: #5e5e5e; font-style: italic; } /* Warning */
     --text-color:       rgba(255, 255, 255, 0.8);
     --text-size:        15px;
     --hover-color:      white;
-    --bkgd-color:       #7D451B;
+    --bkgd-color:       #999999;
   }
 
   /*-- Additional custom styles --*/
@@ -1991,7 +1992,7 @@ code span.wa { color: #5e5e5e; font-style: italic; } /* Warning */
   h1 {
     margin-top: 2em !important;
     font-size: 36px !important;
-    color: #7D451B !important;
+    color: #7F5539 !important;
   }
 
   d-article h1:nth-child(2) {
@@ -2334,16 +2335,23 @@ Enrichment Analyses
 <div class="layout-chunk" data-layout="l-body">
 <div class="sourceCode">
 <pre class="sourceCode r"><code class="sourceCode r"><span class='co'># header style</span>
-<span class='va'>hs</span> <span class='op'>=</span> <span class='fu'><a href='https://rdrr.io/pkg/openxlsx/man/createStyle.html'>createStyle</a></span><span class='op'>(</span>fontColour <span class='op'>=</span> <span class='st'>"#FAF3DD"</span>, fgFill <span class='op'>=</span> <span class='st'>"#337CA0"</span>, fontName <span class='op'>=</span> <span class='st'>"Arial Black"</span>, halign <span class='op'>=</span> <span class='st'>"center"</span>, valign <span class='op'>=</span> <span class='st'>"center"</span>, textDecoration <span class='op'>=</span> <span class='st'>"Bold"</span>, border <span class='op'>=</span> <span class='st'>"Bottom"</span>, borderStyle <span class='op'>=</span> <span class='st'>"thick"</span>, fontSize <span class='op'>=</span> <span class='fl'>14</span><span class='op'>)</span>
+<span class='va'>hs</span> <span class='op'>=</span> <span class='fu'><a href='https://rdrr.io/pkg/openxlsx/man/createStyle.html'>createStyle</a></span><span class='op'>(</span>fontColour <span class='op'>=</span> <span class='st'>"#FAF3DD"</span>, fgFill <span class='op'>=</span> <span class='st'>"#337CA0"</span>,
+                 fontName <span class='op'>=</span> <span class='st'>"Arial Black"</span>, halign <span class='op'>=</span> <span class='st'>"center"</span>,
+                 valign <span class='op'>=</span> <span class='st'>"center"</span>, textDecoration <span class='op'>=</span> <span class='st'>"Bold"</span>,
+                 border <span class='op'>=</span> <span class='st'>"Bottom"</span>, borderStyle <span class='op'>=</span> <span class='st'>"thick"</span>, fontSize <span class='op'>=</span> <span class='fl'>14</span><span class='op'>)</span>
 
 <span class='co'># row style #1</span>
-<span class='va'>r1</span> <span class='op'>=</span> <span class='fu'><a href='https://rdrr.io/pkg/openxlsx/man/createStyle.html'>createStyle</a></span><span class='op'>(</span>fontColour <span class='op'>=</span> <span class='st'>"#363635"</span>, fgFill <span class='op'>=</span> <span class='st'>"#FAF3DD"</span>, fontName <span class='op'>=</span> <span class='st'>"Arial"</span>, fontSize <span class='op'>=</span> <span class='fl'>10</span><span class='op'>)</span>
+<span class='va'>r1</span> <span class='op'>=</span> <span class='fu'><a href='https://rdrr.io/pkg/openxlsx/man/createStyle.html'>createStyle</a></span><span class='op'>(</span>fontColour <span class='op'>=</span> <span class='st'>"#363635"</span>, fgFill <span class='op'>=</span> <span class='st'>"#FAF3DD"</span>,
+                 fontName <span class='op'>=</span> <span class='st'>"Arial"</span>, fontSize <span class='op'>=</span> <span class='fl'>10</span><span class='op'>)</span>
 
 <span class='co'># row style #2</span>
-<span class='va'>r2</span> <span class='op'>=</span> <span class='fu'><a href='https://rdrr.io/pkg/openxlsx/man/createStyle.html'>createStyle</a></span><span class='op'>(</span>fontColour <span class='op'>=</span> <span class='st'>"#363635"</span>, fgFill <span class='op'>=</span> <span class='st'>"#C4E4E9"</span>, fontName <span class='op'>=</span> <span class='st'>"Arial"</span>, fontSize <span class='op'>=</span> <span class='fl'>10</span><span class='op'>)</span>
+<span class='va'>r2</span> <span class='op'>=</span> <span class='fu'><a href='https://rdrr.io/pkg/openxlsx/man/createStyle.html'>createStyle</a></span><span class='op'>(</span>fontColour <span class='op'>=</span> <span class='st'>"#363635"</span>, fgFill <span class='op'>=</span> <span class='st'>"#C4E4E9"</span>,
+                 fontName <span class='op'>=</span> <span class='st'>"Arial"</span>, fontSize <span class='op'>=</span> <span class='fl'>10</span><span class='op'>)</span>
 
 <span class='co'># subheader style</span>
-<span class='va'>sh</span> <span class='op'>=</span> <span class='fu'><a href='https://rdrr.io/pkg/openxlsx/man/createStyle.html'>createStyle</a></span><span class='op'>(</span>fontColour <span class='op'>=</span> <span class='st'>"#363635"</span>, fgFill <span class='op'>=</span> <span class='st'>"#FFA69E"</span>, fontName <span class='op'>=</span> <span class='st'>"Arial"</span>, textDecoration <span class='op'>=</span> <span class='st'>"Bold"</span>, border <span class='op'>=</span> <span class='st'>"TopBottom"</span>, borderStyle <span class='op'>=</span> <span class='st'>"thick"</span><span class='op'>)</span>
+<span class='va'>sh</span> <span class='op'>=</span> <span class='fu'><a href='https://rdrr.io/pkg/openxlsx/man/createStyle.html'>createStyle</a></span><span class='op'>(</span>fontColour <span class='op'>=</span> <span class='st'>"#363635"</span>, fgFill <span class='op'>=</span> <span class='st'>"#FFA69E"</span>,
+                 fontName <span class='op'>=</span> <span class='st'>"Arial"</span>, textDecoration <span class='op'>=</span> <span class='st'>"Bold"</span>,
+                 border <span class='op'>=</span> <span class='st'>"TopBottom"</span>, borderStyle <span class='op'>=</span> <span class='st'>"thick"</span><span class='op'>)</span>
 </code></pre>
 </div>
 </div>
@@ -2413,7 +2421,9 @@ Enrichment Analyses
   
   <span class='co'># rename columns for Excel workbook</span>
   <span class='va'>datWB</span> <span class='op'>=</span> <span class='fu'><a href='https://Rdatatable.gitlab.io/data.table/reference/copy.html'>copy</a></span><span class='op'>(</span><span class='va'>dat</span><span class='op'>)</span>
-  <span class='fu'><a href='https://Rdatatable.gitlab.io/data.table/reference/setattr.html'>setnames</a></span><span class='op'>(</span><span class='va'>datWB</span>, <span class='fu'><a href='https://rdrr.io/r/base/c.html'>c</a></span><span class='op'>(</span><span class='st'>"ID"</span>, <span class='st'>"Pathway"</span>, <span class='st'>"K (Genes in Pathway)"</span>, <span class='st'>"k (Genes in Overlap)"</span>, <span class='st'>"k/K"</span>, <span class='st'>"p-value"</span>, <span class='st'>"FDR q-value"</span>, <span class='st'>"Cluster"</span>, <span class='st'>"Symbol"</span>, <span class='st'>"ENTREZ"</span>, <span class='st'>"Description"</span><span class='op'>)</span><span class='op'>)</span>
+  <span class='fu'><a href='https://Rdatatable.gitlab.io/data.table/reference/setattr.html'>setnames</a></span><span class='op'>(</span><span class='va'>datWB</span>, <span class='fu'><a href='https://rdrr.io/r/base/c.html'>c</a></span><span class='op'>(</span><span class='st'>"ID"</span>, <span class='st'>"Pathway"</span>, <span class='st'>"K (Genes in Pathway)"</span>,
+                    <span class='st'>"k (Genes in Overlap)"</span>, <span class='st'>"k/K"</span>, <span class='st'>"p-value"</span>, <span class='st'>"FDR q-value"</span>,
+                    <span class='st'>"Cluster"</span>, <span class='st'>"Symbol"</span>, <span class='st'>"ENTREZ"</span>, <span class='st'>"Description"</span><span class='op'>)</span><span class='op'>)</span>
   <span class='va'>header</span> <span class='op'>=</span> <span class='va'>datWB</span><span class='op'>[</span>, <span class='fu'><a href='https://rdrr.io/r/base/which.html'>which</a></span><span class='op'>(</span><span class='op'>!</span><span class='fu'><a href='https://Rdatatable.gitlab.io/data.table/reference/duplicated.html'>duplicated</a></span><span class='op'>(</span><span class='va'>Cluster</span><span class='op'>)</span><span class='op'>)</span><span class='op'>]</span> <span class='op'>+</span> <span class='fl'>0</span><span class='op'>:</span><span class='op'>(</span><span class='va'>nclust</span> <span class='op'>-</span> <span class='fl'>1</span><span class='op'>)</span>
   
   <span class='co'># add rows for manual annotatioN</span>
@@ -2504,7 +2514,11 @@ Enrichment Analyses
 <span class='co'># refactor cluster database labels and order by -log10(FDR q-value)</span>
 <span class='va'>clusters</span> <span class='op'>=</span> <span class='va'>clusters</span> <span class='op'>%&gt;%</span>
   <span class='va'>.</span><span class='op'>[</span>, <span class='va'>ID</span> <span class='op'>:=</span> <span class='cn'>NULL</span><span class='op'>]</span> <span class='op'>%&gt;%</span>
-  <span class='va'>.</span><span class='op'>[</span>, <span class='va'>Database</span> <span class='op'>:=</span> <span class='fu'><a href='https://rdrr.io/r/base/factor.html'>factor</a></span><span class='op'>(</span><span class='va'>Database</span>, levels <span class='op'>=</span> <span class='fu'><a href='https://rdrr.io/r/base/c.html'>c</a></span><span class='op'>(</span><span class='st'>"GO BP"</span>, <span class='st'>"GO CC"</span>, <span class='st'>"GO MF"</span>, <span class='st'>"Reactome"</span><span class='op'>)</span>, labels <span class='op'>=</span> <span class='fu'><a href='https://rdrr.io/r/base/c.html'>c</a></span><span class='op'>(</span><span class='st'>"GO: Biological Process"</span>, <span class='st'>"GO: Cellular Component"</span>, <span class='st'>"GO: Molecular Function"</span>, <span class='st'>"Reactome"</span><span class='op'>)</span><span class='op'>)</span><span class='op'>]</span> <span class='op'>%&gt;%</span>
+  <span class='va'>.</span><span class='op'>[</span>, <span class='va'>Database</span> <span class='op'>:=</span> <span class='fu'><a href='https://rdrr.io/r/base/factor.html'>factor</a></span><span class='op'>(</span>
+    <span class='va'>Database</span>,
+    levels <span class='op'>=</span> <span class='fu'><a href='https://rdrr.io/r/base/c.html'>c</a></span><span class='op'>(</span><span class='st'>"GO BP"</span>, <span class='st'>"GO CC"</span>, <span class='st'>"GO MF"</span>, <span class='st'>"Reactome"</span><span class='op'>)</span>,
+    labels <span class='op'>=</span> <span class='fu'><a href='https://rdrr.io/r/base/c.html'>c</a></span><span class='op'>(</span><span class='st'>"GO: Biological Process"</span>, <span class='st'>"GO: Cellular Component"</span>,
+               <span class='st'>"GO: Molecular Function"</span>, <span class='st'>"Reactome"</span><span class='op'>)</span><span class='op'>)</span><span class='op'>]</span> <span class='op'>%&gt;%</span>
   <span class='va'>.</span><span class='op'>[</span><span class='fu'><a href='https://Rdatatable.gitlab.io/data.table/reference/setorder.html'>order</a></span><span class='op'>(</span><span class='va'>Database</span>, <span class='va'>logQ</span><span class='op'>)</span>, <span class='op'>]</span>
 </code></pre>
 </div>
