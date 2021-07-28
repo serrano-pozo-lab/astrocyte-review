@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/386719085.svg)](https://zenodo.org/badge/latestdoi/386719085)
+
 # Systematic Review of Human Postmortem Immunohistochemical Studies and Bioinformatics Analyses Unveil the Complexity of Astrocyte Reaction in Alzheimer’s Disease
 
 ## About
