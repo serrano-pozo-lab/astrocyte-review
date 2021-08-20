@@ -1,0 +1,50 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Viejo"
+  given-names: "Lucía"
+- family-names: "Noori"
+  given-names: "Ayush"
+  orcid: "https://orcid.org/0000-0003-1420-1236"
+- family-names: "Merrill"
+  given-names: "Emily"
+- family-names: "Das"
+  given-names: "Sudeshna"
+  orcid: "https://orcid.org/0000-0002-9486-6811"
+- family-names: "Hyman"
+  given-names: "Bradley T."
+- family-names: "Serrano-Pozo"
+  given-names: "Alberto"
+  orcid: "https://orcid.org/0000-0003-0899-7530"
+title: "Systematic review of human post-mortem immunohistochemical studies and bioinformatics analyses unveil the complexity of astrocyte reaction in Alzheimer's disease"
+version: 1.0.0
+doi: 10.5281/zenodo.5140749
+date-released: 2021-07-23
+url: " https://github.com/serrano-pozo-lab/astrocyte-review"
+preferred-citation:
+  type: article
+  authors:
+- family-names: "Viejo"
+  given-names: "Lucía"
+- family-names: "Noori"
+  given-names: "Ayush"
+  orcid: "https://orcid.org/0000-0003-1420-1236"
+- family-names: "Merrill"
+  given-names: "Emily"
+- family-names: "Das"
+  given-names: "Sudeshna"
+  orcid: "https://orcid.org/0000-0002-9486-6811"
+- family-names: "Hyman"
+  given-names: "Bradley T."
+- family-names: "Serrano-Pozo"
+  given-names: "Alberto"
+  orcid: "https://orcid.org/0000-0003-0899-7530"
+  doi: "10.1111/nan.12753"
+  journal: "Neuropathology and Applied Neurobiology"
+  month: 7
+  start: N/A # First page number
+  end: N/A # Last page number
+  title: "Systematic review of human post-mortem immunohistochemical studies and bioinformatics analyses unveil the complexity of astrocyte reaction in Alzheimer's disease"
+  issue: N/A
+  volume: N/A
+  year: 2021
